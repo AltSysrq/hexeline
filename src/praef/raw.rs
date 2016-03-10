@@ -28,65 +28,70 @@ pub enum MessageBus { }
 
 pub enum Asn1NetworkIdentifierPair { }
 
-pub type CbDrop = extern fn (this: *mut c_void);
-pub type CbObjectStep = extern fn (this: *mut c_void, id: ObjectId,
-                                   context: *const SimpleContext);
-pub type CbObjectRewind = extern fn (this: *mut c_void, id: ObjectId,
+pub type CbDrop = unsafe extern fn (this: *mut c_void);
+pub type CbObjectStep = unsafe extern fn (
+    this: *mut c_void, id: ObjectId, context: *const SimpleContext);
+pub type CbObjectRewind = unsafe extern fn (this: *mut c_void, id: ObjectId,
                                      instant: Instant);
-pub type CbCreateNodeObject = extern fn (
+pub type CbCreateNodeObject = unsafe extern fn (
     dst: *mut c_void,
     drop: *mut CbDrop, step: *mut CbObjectStep, rewind: *mut CbObjectRewind,
     context: *const SimpleContext, id: ObjectId) -> c_int;
 
-pub type CbEventApply = extern fn (
+pub type CbEventApply = unsafe extern fn (
     object: *mut c_void, event: *const c_void,
     object_id: ObjectId, instant: Instant,
     serno: EventSerialNumber,
     context: *const SimpleContext);
-pub type CbDecodeEvent = extern fn (
+pub type CbDecodeEvent = unsafe extern fn (
     dst: *mut c_void, drop: *mut CbDrop, apply: *mut CbEventApply,
     context: *const SimpleContext,
     instant: Instant, object: ObjectId, serno: EventSerialNumber,
     data: *const c_void, size: size_t) -> c_int;
 
-pub type CbAuthIsValid = extern fn (
+pub type CbAuthIsValid = unsafe extern fn (
     context: *const SimpleContext,
     request: *const JoinRequest) -> c_int;
-pub type CbAuthGen = extern fn (
+pub type CbAuthGen = unsafe extern fn (
     request: *mut JoinRequest,
     context: *const SimpleContext);
 
-pub type CbPermitObjectId = extern fn (context: *const SimpleContext,
-                                       id: ObjectId) -> c_int;
-pub type CbAcquireId = extern fn (context: *const SimpleContext, id: ObjectId);
-pub type CbDiscoverNode = extern fn (context: *const SimpleContext,
-                                     netid: *const NetIdPair,
-                                     id: ObjectId);
-pub type CbRemoveNode = extern fn (context: *const SimpleContext,
-                                   id: ObjectId);
-pub type CbJoinTreeTraversed = extern fn (context: *const SimpleContext);
-pub type CbHtScanProgress = extern fn (context: *const SimpleContext,
-                                       numerator: u32, denominator: u32);
-pub type CbAwaitingStability = extern fn (context: *const SimpleContext,
-                                          node: ObjectId, systime: Instant,
-                                          committed: Instant,
-                                          validated: Instant);
-pub type CbInformationComplete = extern fn (context: *const SimpleContext);
-pub type CbClockSynced = extern fn (context: *const SimpleContext);
-pub type CbGainedGrant = extern fn (context: *const SimpleContext);
-pub type CbRecvUnicast = extern fn (
+pub type CbPermitObjectId = unsafe extern fn (
+    context: *const SimpleContext, id: ObjectId) -> c_int;
+pub type CbAcquireId = unsafe extern fn (
+    context: *const SimpleContext, id: ObjectId);
+pub type CbDiscoverNode = unsafe extern fn (context: *const SimpleContext,
+                                            netid: *const NetIdPair,
+                                            id: ObjectId);
+pub type CbRemoveNode = unsafe extern fn (context: *const SimpleContext,
+                                          id: ObjectId);
+pub type CbJoinTreeTraversed = unsafe extern fn (
+    context: *const SimpleContext);
+pub type CbHtScanProgress = unsafe extern fn (
+    context: *const SimpleContext,
+    numerator: u32, denominator: u32);
+pub type CbAwaitingStability = unsafe extern fn (
+    context: *const SimpleContext,
+    node: ObjectId, systime: Instant,
+    committed: Instant, validated: Instant);
+pub type CbInformationComplete = unsafe extern fn (
+    context: *const SimpleContext);
+pub type CbClockSynced = unsafe extern fn (context: *const SimpleContext);
+pub type CbGainedGrant = unsafe extern fn (context: *const SimpleContext);
+pub type CbRecvUnicast = unsafe extern fn (
     context: *const SimpleContext,
     from_node: ObjectId, instant: Instant,
     data: *const c_void, size: size_t);
-pub type CbLog = extern fn (context: *const SimpleContext, msg: *const c_char);
+pub type CbLog = unsafe extern fn (context: *const SimpleContext,
+                                   msg: *const c_char);
 
-pub type CbEventOptimism = extern fn (
+pub type CbEventOptimism = unsafe extern fn (
     context: *const SimpleContext,
     target: ObjectId,
     when: Instant,
     serno: EventSerialNumber,
     event: *const c_void) -> u32;
-pub type CbEventVote = extern fn (
+pub type CbEventVote = unsafe extern fn (
     context: *const SimpleContext,
     target: ObjectId,
     when: Instant,
@@ -103,8 +108,8 @@ pub struct VirtualNetworkLink {
     pub duplicity: u16,
 }
 
-enum VirtualNetwork { }
-enum VirtualBus { }
+pub enum VirtualNetwork { }
+pub enum VirtualBus { }
 
 #[link(name = "praefectus")]
 extern {
@@ -153,7 +158,7 @@ extern {
     pub fn praef_simple_cb_ht_scan_progress(
         context: *mut SimpleContext,
         callback: CbHtScanProgress);
-    pub fn praef_simple_cb_awaiting_stability_t(
+    pub fn praef_simple_cb_awaiting_stability(
         context: *mut SimpleContext,
         callback: CbAwaitingStability);
     pub fn praef_simple_cb_information_complete(
@@ -175,7 +180,7 @@ extern {
     pub fn praef_simple_cb_event_optimism(
         context: *mut SimpleContext,
         callback: CbEventOptimism);
-    pub fn praef_simple_cb_event_vote_t(
+    pub fn praef_simple_cb_event_vote(
         context: *mut SimpleContext,
         callback: CbEventVote);
 
@@ -195,7 +200,7 @@ extern {
         c_int;
     pub fn praef_system_get_local_id(system: *const System) -> ObjectId;
     pub fn praef_system_get_latency_to(system: *const System,
-                                   node: ObjectId) -> u32;
+                                       node: ObjectId) -> u32;
     pub fn praef_system_oom(system: *mut System);
 
     pub fn praef_system_conf_clock_obsolescence_interval(

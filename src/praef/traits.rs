@@ -18,24 +18,35 @@
 use super::defs::*;
 use super::raw;
 
-pub trait Object<S> {
+pub trait Object<S>: Sized {
+    fn create(id: ObjectId, state: &mut S) -> Self;
     fn step(&mut self, id: ObjectId, state: &mut S);
     fn rewind(&mut self, id: ObjectId, instant: Instant);
 }
 
-pub trait Event<S, Target: Object<S>> {
-    fn apply(&self, target: &mut Target, state: &mut S);
+#[allow(unused_variables)]
+pub trait Event<S, Target: Object<S>>: Sized {
+    fn decode(instant: Instant, object: ObjectId,
+              serno: EventSerialNumber,
+              state: &mut S,
+              data: &[u8]) -> Option<Self>;
+
+    fn apply(&self, target: &mut Target, state: &mut S,
+             object_id: ObjectId, instant: Instant,
+             serno: EventSerialNumber);
+
+    fn optimism(&self, object: ObjectId, when: Instant,
+                serno: EventSerialNumber,
+                state: &mut S) -> u32 { 0 }
+    fn should_vote(&self, object: ObjectId, when: Instant,
+                   serno: EventSerialNumber,
+                   state: &mut S) -> bool { true }
 }
 
 #[allow(unused_variables)]
 pub trait Application: Sized {
     type O: Object<Self>;
     type E: Event<Self, Self::O>;
-
-    fn create_node_object(&mut self, id: ObjectId) -> Self::O;
-    fn decode_event(&mut self, instant: Instant, object: ObjectId,
-                    serno: EventSerialNumber,
-                    data: &[u8]) -> Option<Self::E>;
 
     fn auth_is_valid(&mut self, request: &JoinRequest) -> bool { true }
     fn auth_gen(&mut self, request: &mut JoinRequest) { }
@@ -54,13 +65,6 @@ pub trait Application: Sized {
     fn recv_unicast(&mut self, from_node: ObjectId, instant: Instant,
                     data: &[u8]) { }
     fn log(&mut self, msg: &str) { }
-
-    fn event_optimism(&mut self, object: ObjectId, when: Instant,
-                      serno: EventSerialNumber,
-                      event: &Self::E) -> u32 { 0 }
-    fn event_vote(&mut self, object: ObjectId, when: Instant,
-                  serno: EventSerialNumber,
-                  event: &Self::E) -> bool { true }
 }
 
 pub unsafe trait MessageBus {
