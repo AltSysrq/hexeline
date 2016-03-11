@@ -15,7 +15,7 @@
 
 #![allow(dead_code)]
 
-use std::{ptr,mem,slice,str,error,fmt};
+use std::{ptr,mem,slice,str,error,fmt,u32};
 use libc;
 
 use super::defs::*;
@@ -46,6 +46,20 @@ impl error::Error for Error {
     }
 }
 
+macro_rules! knob {
+    ($native:ident, $local:ident, $min:expr, $max:expr) => {
+        #[allow(unused_comparisons)]
+        pub fn $local(&mut self, val: u32) {
+            if val < $min || val > $max {
+                panic!("Illegal value passed to configuration");
+            }
+            unsafe {
+                raw::$native(self.sys(), val);
+            }
+        }
+    }
+}
+
 impl <'a, S: Application + 'a> System<'a, S> {
     pub fn new(application: &'a mut S,
                bus: &'a mut MessageBus,
@@ -54,6 +68,13 @@ impl <'a, S: Application + 'a> System<'a, S> {
                ip_version: SystemIpVersion,
                net_locality: SystemNetworkLocality,
                mtu: u32) -> Result<Self,Error> {
+        // std_latency is the default for a lot of knobs with undefined
+        // behaviour at 0. Arbitrarily chose 65536 as the upper bound to avoid
+        // overflow.
+        if 0 == std_latency || std_latency >= 65536 {
+            return Err(Error{ d: "Illegal std_latency" });
+        }
+
         unsafe {
             let context = raw::praef_simple_new(
                 application as *mut S as *mut raw::c_void,
@@ -189,6 +210,93 @@ impl <'a, S: Application + 'a> System<'a, S> {
         }
     }
 
+    knob!(praef_system_conf_clock_obsolescence_interval,
+          set_clock_obsolescence_interval, 1, u32::MAX);
+    knob!(praef_system_conf_clock_tolerance,
+          set_clock_tolerance, 0, u32::MAX);
+    knob!(praef_system_conf_commit_interval,
+          set_commit_interval, 1, u32::MAX);
+    knob!(praef_system_conf_max_commit_lag,
+          set_max_commit_lag, 1, u32::MAX);
+    knob!(praef_system_conf_max_validated_lag,
+          set_max_validated_lag, 1, u32::MAX);
+    knob!(praef_system_conf_commit_lag_laxness,
+          set_commit_lag_laxness, 0, u32::MAX);
+    pub fn set_commit_lag_compensation(&mut self, numerator: u32,
+                                       denominator: u32) {
+        if numerator >= 65536 || denominator == 0 || denominator >= 65536 {
+            panic!("Illegal value passed to configuration");
+        }
+        unsafe {
+            raw::praef_system_conf_commit_lag_compensation(
+                self.sys(), numerator, denominator);
+        }
+    }
+    knob!(praef_system_conf_public_visibility_lag,
+          set_public_visibility_lag, 0, u32::MAX);
+    knob!(praef_system_conf_stability_wait,
+          set_stability_wait, 0, u32::MAX);
+    knob!(praef_system_conf_join_tree_query_interval,
+          set_join_tree_query_interval, 1, u32::MAX);
+    knob!(praef_system_conf_accept_interval,
+          set_accept_interval, 1, u32::MAX);
+    knob!(praef_system_conf_max_live_nodes,
+          set_max_live_nodes, 1, u32::MAX);
+    knob!(praef_system_conf_ht_range_max,
+          set_ht_range_max, 1, u32::MAX);
+    knob!(praef_system_conf_ht_range_query_interval,
+          set_ht_range_query_interval, 1, u32::MAX);
+    knob!(praef_system_conf_ht_scan_redundancy,
+          set_ht_scan_redundancy, 1, u32::MAX);
+    pub fn set_ht_scan_concurrency(&mut self, val: u8) {
+        if 0 == val || val > 254 {
+            panic!("Illegal value passed to configuration");
+        }
+        unsafe {
+            raw::praef_system_conf_ht_scan_concurrency(self.sys(), val);
+        }
+    }
+    knob!(praef_system_conf_ht_max_scan_tries,
+          set_ht_max_scan_tries, 0, u32::MAX);
+    knob!(praef_system_conf_ht_snapshot_interval,
+          set_ht_snapshot_interval, 1, u32::MAX);
+    knob!(praef_system_conf_ht_num_snapshots,
+          set_ht_num_snapshots, 1, u32::MAX);
+    knob!(praef_system_conf_ht_root_query_interval,
+          set_ht_root_query_interval, 1, u32::MAX);
+    knob!(praef_system_conf_ht_root_query_offset,
+          set_ht_root_query_offset, 0, u32::MAX);
+    knob!(praef_system_conf_ungranted_route_interval,
+          set_ungranted_route_interval, 1, u32::MAX);
+    knob!(praef_system_conf_granted_route_interval,
+          set_granted_route_interval, 1, u32::MAX);
+    knob!(praef_system_conf_ping_interval,
+          set_ping_interval, 1, u32::MAX);
+    knob!(praef_system_conf_max_pong_silence,
+          set_max_pong_silence, 1, u32::MAX);
+    knob!(praef_system_conf_route_kill_delay,
+          set_route_kill_delay, 0, u32::MAX);
+    knob!(praef_system_conf_propose_grant_interval,
+          set_propose_grant_interval, 1, u32::MAX);
+    knob!(praef_system_conf_vote_deny_interval,
+          set_vote_deny_interval, 1, u32::MAX);
+    knob!(praef_system_conf_vote_chmod_offset,
+          set_vote_chmod_offset, 1, u32::MAX);
+    knob!(praef_system_conf_grace_period,
+          set_grace_period, 0, u32::MAX);
+    knob!(praef_system_conf_direct_ack_interval,
+          set_direct_ack_interval, 1, u32::MAX);
+    knob!(praef_system_conf_indirect_ack_interval,
+          set_indirect_ack_interval, 1, u32::MAX);
+    knob!(praef_system_conf_linear_ack_interval,
+          set_linear_ack_interval, 1, u32::MAX);
+    knob!(praef_system_conf_linear_ack_max_xmit,
+          set_linear_ack_max_xmit, 1, u32::MAX);
+    knob!(praef_system_conf_max_advance_per_frame,
+          set_max_advance_per_frame, 1, u32::MAX);
+    knob!(praef_system_conf_max_event_vote_offset,
+          set_max_event_vote_offset, 0, u32::MAX);
+
     fn sys(&self) -> *mut raw::System {
         unsafe {
             raw::praef_simple_get_system(self.context)
@@ -196,7 +304,7 @@ impl <'a, S: Application + 'a> System<'a, S> {
     }
 
     unsafe extern fn cb_object_drop(vobject: *mut c_void) {
-        Box::from_raw(vobject as *mut S::O);
+        mem::drop(ptr::read(vobject as *mut S::O));
     }
 
     unsafe extern fn cb_object_step(vobject: *mut c_void, id: ObjectId,
@@ -226,7 +334,7 @@ impl <'a, S: Application + 'a> System<'a, S> {
     }
 
     unsafe extern fn cb_event_drop(vevent: *mut c_void) {
-        Box::from_raw(vevent as *mut S::E);
+        mem::drop(ptr::read(vevent as *mut S::E));
     }
 
     unsafe extern fn cb_event_apply(
