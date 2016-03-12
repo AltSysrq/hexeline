@@ -69,5 +69,5 @@ pub trait Application: Sized {
 
 pub unsafe trait MessageBus {
     fn to_raw_message_bus(&self) -> *mut raw::MessageBus;
-    fn get_self_netid(&self) -> *const raw::Asn1NetworkIdentifierPair;
+    fn self_netid(&self) -> *const raw::Asn1NetworkIdentifierPair;
 }

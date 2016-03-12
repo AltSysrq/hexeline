@@ -78,7 +78,7 @@ impl <'a, S: Application + 'a> System<'a, S> {
         unsafe {
             let context = raw::praef_simple_new(
                 application as *mut S as *mut raw::c_void,
-                bus.to_raw_message_bus(), bus.get_self_netid(),
+                bus.to_raw_message_bus(), bus.self_netid(),
                 std_latency, profile, ip_version, net_locality, mtu);
             if context.is_null() {
                 return Err(Error{ d: "Failed to allocate simplified context" });

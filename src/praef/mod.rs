@@ -23,3 +23,6 @@ pub use self::traits::*;
 
 mod front;
 pub use self::front::*;
+
+mod vnet;
+pub use self::vnet::*;
