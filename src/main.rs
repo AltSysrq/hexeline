@@ -17,6 +17,7 @@ extern crate sdl2;
 extern crate libc;
 
 mod praef;
+mod physics;
 
 use std::io;
 use std::io::Write;
