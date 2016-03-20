@@ -13,14 +13,19 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-extern crate sdl2;
 extern crate libc;
+extern crate glium;
+extern crate sdl2;
+
+use std::io;
+use std::io::Write;
+
+mod glium_sdl2;
 
 mod praef;
 mod physics;
 
-use std::io;
-use std::io::Write;
+use glium_sdl2::DisplayBuild;
 
 fn main() {
     fn die<T>(message: String) -> T {
@@ -43,27 +48,42 @@ fn main() {
     let _sdl_game_controller = sdl_context.game_controller()
         .unwrap_or_else(die);
     let sdl_video = sdl_context.video().unwrap_or_else(die);
-    let _sdl_event_pump = sdl_context.event_pump().unwrap_or_else(die);
+    let mut sdl_event_pump = sdl_context.event_pump().unwrap_or_else(die);
 
     sdl_video.gl_attr().set_context_profile(
         sdl2::video::GLProfile::Core);
 
     let current_mode = sdl_video.current_display_mode(0)
         .unwrap_or_else(die);
-    let window = sdl_video.window(
-        "Hexeline",
-        to_window_size(current_mode.w, 640),
-        to_window_size(current_mode.h, 480))
-        .opengl()
-        .build().unwrap_or_else(|error| {
+    let display = DisplayBuild::build_glium(
+        &mut sdl_video.window(
+            "Hexeline",
+            to_window_size(current_mode.w, 640),
+            to_window_size(current_mode.h, 480)))
+        .unwrap_or_else(|error| {
             match error {
-                sdl2::video::WindowBuildResult::SdlError(message) =>
+                glium::GliumCreationError::BackendCreationError(
+                    sdl2::video::WindowBuildError::SdlError(message)) =>
                     die(message),
+                glium::GliumCreationError::IncompatibleOpenGl(message) =>
+                    die(format!("Incompatible OpenGL: {}", message)),
                 any => die(format!("Unexpected error: {:?}", any)),
             }
         });
 
-    std::thread::sleep(std::time::Duration::from_millis(5000));
+    'main_loop: loop {
+        let mut target = display.draw();
+        target.finish().unwrap();
 
-    println!("hello sdl");
+        for event in sdl_event_pump.poll_iter() {
+            use sdl2::event::Event;
+
+            match event {
+                Event::Quit { .. } => {
+                    break 'main_loop;
+                },
+                _ => (),
+            }
+        }
+    }
 }
