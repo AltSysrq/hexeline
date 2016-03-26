@@ -13,8 +13,6 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-use glium;
-
 #[derive(Copy,Clone,Debug)]
 pub struct Vertex {
     pub v: [f32; 2],
@@ -23,13 +21,4 @@ pub struct Vertex {
 #[derive(Copy,Clone,Debug)]
 pub struct Uniform {
     pub colour: [f32; 4],
-}
-
-implement_vertex!(Vertex, v);
-implement_uniform_block!(Uniform, colour);
-
-pub fn make(glf: &::Glf) -> glium::program::Program {
-    glium::program::Program::from_source(
-        glf, include_str!("v_flat.glsl"), include_str!("f_flat.glsl"), None)
-        .unwrap()
 }

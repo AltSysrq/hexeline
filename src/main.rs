@@ -14,14 +14,8 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 extern crate libc;
-#[macro_use]
-extern crate glium;
 extern crate sdl2;
 extern crate nalgebra as na;
-
-mod glium_sdl2;
-
-pub type Glf = glium_sdl2::SDL2Facade;
 
 mod praef;
 mod physics;
@@ -31,9 +25,6 @@ use std::io;
 use std::io::Write;
 
 fn main() {
-    use glium_sdl2::DisplayBuild;
-    use glium::Surface;
-
     fn die<T>(message: String) -> T {
         writeln!(&mut io::stderr(), "Failed to initialise SDL: {}", message)
             .unwrap();
@@ -61,36 +52,21 @@ fn main() {
 
     let current_mode = sdl_video.current_display_mode(0)
         .unwrap_or_else(die);
-    let display = DisplayBuild::build_glium(
-        &mut sdl_video.window(
+    let screen =
+        sdl_video.window(
             "Hexeline",
             to_window_size(current_mode.w, 640),
-            to_window_size(current_mode.h, 480)))
-        .unwrap_or_else(|error| {
+            to_window_size(current_mode.h, 480))
+        .opengl()
+        .build().unwrap_or_else(|error| {
             match error {
-                glium::GliumCreationError::BackendCreationError(
-                    sdl2::video::WindowBuildError::SdlError(message)) =>
+                sdl2::video::WindowBuildError::SdlError(message) =>
                     die(message),
-                glium::GliumCreationError::IncompatibleOpenGl(message) =>
-                    die(format!("Incompatible OpenGL: {}", message)),
                 any => die(format!("Unexpected error: {:?}", any)),
             }
         });
 
-    let flat_shader = gl::flat::make(&display);
-    let vertex_buffer = glium::VertexBuffer::new(
-        &display, vec![
-            gl::flat::Vertex { v: [-0.5, -0.5] },
-            gl::flat::Vertex { v: [ 0.0,  0.5] },
-            gl::flat::Vertex { v: [ 0.5, -0.25] },
-        ]).unwrap();
-    let indices = glium::index::NoIndices(
-        glium::index::PrimitiveType::TrianglesList);
-
     'main_loop: loop {
-        let mut target = display.draw();
-        target.clear_color(0.0, 0.0, 0.0, 1.0);
-        target.finish().unwrap();
 
         for event in sdl_event_pump.poll_iter() {
             use sdl2::event::Event;
