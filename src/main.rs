@@ -16,10 +16,11 @@
 extern crate libc;
 extern crate sdl2;
 extern crate nalgebra as na;
+extern crate gl;
 
 mod praef;
 mod physics;
-mod gl;
+mod graphic;
 
 use std::io;
 use std::io::Write;
@@ -52,7 +53,7 @@ fn main() {
 
     let current_mode = sdl_video.current_display_mode(0)
         .unwrap_or_else(die);
-    let screen =
+    let _screen =
         sdl_video.window(
             "Hexeline",
             to_window_size(current_mode.w, 640),
@@ -65,6 +66,10 @@ fn main() {
                 any => die(format!("Unexpected error: {:?}", any)),
             }
         });
+
+    // Load all the GL functions, since this doesn't happen on-demand
+    gl::load_with(|s| sdl_video.gl_get_proc_address(s) as
+                  *const std::os::raw::c_void);
 
     'main_loop: loop {
 
