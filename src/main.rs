@@ -15,7 +15,6 @@
 
 extern crate libc;
 extern crate sdl2;
-extern crate nalgebra as na;
 extern crate gl;
 
 mod praef;
@@ -24,6 +23,7 @@ mod graphic;
 
 use std::io;
 use std::io::Write;
+use gl::types::*;
 
 fn main() {
     fn die<T>(message: String) -> T {
@@ -72,6 +72,11 @@ fn main() {
     // Load all the GL functions, since this doesn't happen on-demand
     gl::load_with(|s| sdl_video.gl_get_proc_address(s) as
                   *const std::os::raw::c_void);
+
+    unsafe {
+        gl::Viewport(0, 0, screen.drawable_size().0 as GLsizei,
+                     screen.drawable_size().1 as GLsizei);
+    }
 
     let shader_programs = graphic::ShaderPrograms::new().unwrap_or_else(die);
     let _shaders = graphic::Shaders::new(&shader_programs).unwrap_or_else(die);
