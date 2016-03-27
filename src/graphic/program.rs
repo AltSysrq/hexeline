@@ -118,6 +118,8 @@ impl ProgramHandle {
             gl::FRAGMENT_SHADER, fname, fs));
         ProgramHandle::link(name, vec![v, f])
     }
+
+    pub fn raw(&self) -> GLuint { self.handle }
 }
 
 impl Drop for ProgramHandle {

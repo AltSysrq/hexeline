@@ -14,4 +14,5 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 pub mod program;
+pub mod uniform;
 pub mod flat;
