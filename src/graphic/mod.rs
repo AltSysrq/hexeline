@@ -15,4 +15,5 @@
 
 pub mod program;
 pub mod uniform;
+pub mod vertex;
 pub mod flat;

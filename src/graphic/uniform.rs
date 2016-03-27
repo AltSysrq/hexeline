@@ -19,13 +19,6 @@ use gl::types::*;
 
 use super::program::ProgramHandle;
 
-pub trait Uniform {
-    type BindingInfo;
-
-    fn bind(program: &ProgramHandle) -> Result<Self::BindingInfo,String>;
-    fn put(&self, binding: &Self::BindingInfo);
-}
-
 pub trait UniformFieldType {
     unsafe fn put(&self, ix: GLint);
 }
@@ -60,6 +53,13 @@ impl UniformFieldType for [[f32;4];4] {
     }
 }
 
+pub trait Uniform {
+    type Binding;
+
+    fn bind(program: &ProgramHandle) -> Result<Self::Binding,String>;
+    fn put(&self, binding: &Self::Binding);
+}
+
 pub fn try_bind_uniform_field(program: &ProgramHandle, name: &str)
                               -> Result<GLint,String> {
 unsafe {
@@ -83,11 +83,11 @@ macro_rules! uniform {
 
         #[derive(Copy,Clone,Debug)]
         pub struct $binding {
-            $($field: gl::types::GLint,)*
+            $($field: ::gl::types::GLint,)*
         }
 
         impl $crate::graphic::uniform::Uniform for $name {
-            type BindingInfo = $binding;
+            type Binding = $binding;
 
             fn bind(program: &$crate::graphic::program::ProgramHandle)
                     -> Result<$binding,String> {
