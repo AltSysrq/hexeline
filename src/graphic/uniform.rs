@@ -17,6 +17,7 @@ use std::fmt::Debug;
 use std::ffi::CString;
 use gl;
 use gl::types::*;
+use cg;
 
 use super::program::ProgramHandle;
 
@@ -30,27 +31,27 @@ impl UniformFieldType for f32 {
     }
 }
 
-impl UniformFieldType for [f32;2] {
+impl UniformFieldType for cg::Vector2<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform2fv(ix, 1, &self[0]);
+        gl::Uniform2fv(ix, 1, self as *const Self as *const f32);
     }
 }
 
-impl UniformFieldType for [f32;3] {
+impl UniformFieldType for cg::Vector3<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform3fv(ix, 1, &self[0]);
+        gl::Uniform3fv(ix, 1, self as *const Self as *const f32);
     }
 }
 
-impl UniformFieldType for [f32;4] {
+impl UniformFieldType for cg::Vector4<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform4fv(ix, 1, &self[0]);
+        gl::Uniform4fv(ix, 1, self as *const Self as *const f32);
     }
 }
 
-impl UniformFieldType for [[f32;4];4] {
+impl UniformFieldType for cg::Matrix4<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::UniformMatrix4fv(ix, 1, 0, &self[0][0]);
+        gl::UniformMatrix4fv(ix, 1, 0, self as *const Self as *const f32);
     }
 }
 
@@ -110,6 +111,6 @@ macro_rules! uniform {
 
 uniform! {
     TestUniform, TestUniformBinding;
-    xform: [[f32;4];4],
+    xform: cg::Matrix4<f32>,
     t: f32,
 }

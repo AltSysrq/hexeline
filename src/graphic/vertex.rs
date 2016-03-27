@@ -15,6 +15,7 @@
 
 use std::fmt::Debug;
 use std::ffi::CString;
+use cg;
 use gl;
 use gl::types::*;
 
@@ -31,17 +32,17 @@ unsafe impl VertexFieldType for f32 {
     fn element_type() -> GLenum { gl::FLOAT }
 }
 
-unsafe impl VertexFieldType for [f32;2] {
+unsafe impl VertexFieldType for cg::Vector2<f32> {
     fn element_count() -> GLint { 2 }
     fn element_type() -> GLenum { gl::FLOAT }
 }
 
-unsafe impl VertexFieldType for [f32;3] {
+unsafe impl VertexFieldType for cg::Vector3<f32> {
     fn element_count() -> GLint { 3 }
     fn element_type() -> GLenum { gl::FLOAT }
 }
 
-unsafe impl VertexFieldType for [f32;4] {
+unsafe impl VertexFieldType for cg::Vector4<f32> {
     fn element_count() -> GLint { 4 }
     fn element_type() -> GLenum { gl::FLOAT }
 }
@@ -118,6 +119,6 @@ macro_rules! vertex {
 
 vertex! {
     TestVertex, TestVertexBinding;
-    v: [f32;2],
+    v: cg::Vector2<f32>,
     t: f32,
 }

@@ -17,16 +17,20 @@ use super::program::ProgramHandle;
 use super::shader::Shader;
 
 pub mod vert {
+    use cg;
+
     vertex! {
         Pos2, Pos2Binding;
-        v: [f32;2],
+        v: cg::Vector2<f32>,
     }
 }
 
 pub mod uni {
+    use cg;
+
     uniform! {
         Colour, ColourBinding;
-        colour: [f32; 4],
+        colour: cg::Vector4<f32>,
     }
 }
 

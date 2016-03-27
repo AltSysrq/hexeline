@@ -2,6 +2,7 @@
 name = "hexeline"
 version = "0.1.0"
 dependencies = [
+ "cgmath 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "gl 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2 0.16.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -11,6 +12,16 @@ dependencies = [
 name = "bitflags"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "cgmath"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "num 0.1.31 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc-serialize 0.3.18 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "gl"

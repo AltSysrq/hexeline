@@ -16,6 +16,7 @@
 extern crate libc;
 extern crate sdl2;
 extern crate gl;
+extern crate cgmath as cg;
 
 mod praef;
 mod physics;
