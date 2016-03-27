@@ -52,8 +52,8 @@ impl ShaderHandle {
 
             let log = std::str::from_utf8(&log_data[0..(log_size as usize)])
                 .unwrap_or("(compile log is garbage)");
-            return Err(format!("Unable to compile shader {}: {}",
-                               name, log));
+            return Err(format!("Unable to compile shader {}: {}\n{}",
+                               name, gl::GetError(), log));
         }
 
         Ok(wrapped)
@@ -67,6 +67,7 @@ impl Drop for ShaderHandle {
     } }
 }
 
+#[derive(Debug)]
 pub struct ProgramHandle {
     components: Vec<ShaderHandle>,
     handle: GLuint,
@@ -120,6 +121,10 @@ impl ProgramHandle {
     }
 
     pub fn raw(&self) -> GLuint { self.handle }
+    pub fn activate(&self) {
+    unsafe {
+        gl::UseProgram(self.handle);
+    } }
 }
 
 impl Drop for ProgramHandle {

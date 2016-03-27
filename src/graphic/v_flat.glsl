@@ -1,5 +1,3 @@
-#version 330
-
 in vec2 v;
 uniform vec4 colour;
 

@@ -13,6 +13,7 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+use std::fmt::Debug;
 use std::ffi::CString;
 use gl;
 use gl::types::*;
@@ -46,7 +47,7 @@ unsafe impl VertexFieldType for [f32;4] {
 }
 
 pub trait Vertex {
-    type Binding;
+    type Binding : Copy + Debug;
 
     fn bind(program: &ProgramHandle) -> Result<Self::Binding,String>;
     fn install(binding: &Self::Binding);

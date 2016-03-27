@@ -14,6 +14,15 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 pub mod program;
+#[macro_use]
 pub mod uniform;
+#[macro_use]
 pub mod vertex;
-pub mod flat;
+pub mod vbo;
+pub mod shader;
+pub mod shaders;
+
+pub use self::vbo::{Vbo,ActiveVbo};
+pub use self::shader::{Shader,ActiveShader};
+pub use self::shaders::*;
+
