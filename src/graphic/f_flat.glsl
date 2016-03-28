@@ -1,7 +1,7 @@
 out vec4 dst;
 
-in vec4 v_colour;
+uniform vec4 colour;
 
 void main() {
-  dst = v_colour;
+  dst = colour;
 }

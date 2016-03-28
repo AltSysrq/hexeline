@@ -25,7 +25,7 @@ pub struct Shader<'a, U: Uniform, V: Vertex> {
 }
 
 pub struct ActiveShader<'b,'a: 'b, U: Uniform + 'b, V: Vertex + 'b>(
-    &'b mut Shader<'a, U, V>);
+    pub &'b Shader<'a, U, V>);
 
 impl<'a, U: Uniform, V: Vertex> Shader<'a,U,V> {
     pub fn of(program: &'a ProgramHandle) -> Result<Self,String> {
@@ -36,16 +36,14 @@ impl<'a, U: Uniform, V: Vertex> Shader<'a,U,V> {
         })
     }
 
-    pub fn uniform_binding(&self) -> &U::Binding {
-        &self.uniform_binding
-    }
-
     pub fn vertex_binding(&self) -> &V::Binding {
         &self.vertex_binding
     }
 
-    pub fn activate<'b >(&'b mut self) -> ActiveShader<'b,'a,U,V> {
+    pub fn activate<'b >(&'b self, uniform: &U)
+                         -> ActiveShader<'b,'a,U,V> {
         self.program.activate();
+        uniform.put(&self.uniform_binding);
         ActiveShader(self)
     }
 }

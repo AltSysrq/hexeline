@@ -18,13 +18,14 @@ use std::mem;
 use gl;
 use gl::types::*;
 
+#[derive(Debug)]
 pub struct Vbo<V> {
     target: GLenum,
     handle: GLuint,
     _vertices: PhantomData<V>,
 }
 
-pub struct ActiveVbo<'a,V:'a>(&'a mut Vbo<V>);
+pub struct ActiveVbo<'a,V:'a>(pub &'a Vbo<V>);
 
 impl<V> Vbo<V> {
     pub fn new(target: GLenum) -> Result<Vbo<V>,String> {
@@ -39,7 +40,7 @@ impl<V> Vbo<V> {
         }
     } }
 
-    pub fn activate<'a>(&'a mut self) -> ActiveVbo<'a,V> {
+    pub fn activate<'a>(&'a self) -> ActiveVbo<'a,V> {
         unsafe {
             gl::BindBuffer(self.target, self.handle);
         }

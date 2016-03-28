@@ -79,10 +79,20 @@ fn main() {
                      screen.drawable_size().1 as GLsizei);
     }
 
+    let projection_matrix =
+        // Use real pixel coordinates. Origin is at the top left, down is
+        // positive Y, one unit is one pixel. We'll always be drawing at Z=0,
+        // so just position the Z boundaries on either side.
+        cg::ortho::<f32>(0.0, screen.drawable_size().0 as f32,
+                         screen.drawable_size().1 as f32, 0.0,
+                         -1.0, 1.0);
+
     let shader_programs = graphic::ShaderPrograms::new().unwrap_or_else(die);
-    let _shaders = graphic::Shaders::new(&shader_programs).unwrap_or_else(die);
+    let shaders = graphic::Shaders::new(&shader_programs).unwrap_or_else(die);
 
     'main_loop: loop {
+        draw(&projection_matrix, &shaders);
+        screen.gl_swap_window();
 
         for event in sdl_event_pump.poll_iter() {
             use sdl2::event::Event;
@@ -94,5 +104,32 @@ fn main() {
                 _ => (),
             }
         }
+    }
+}
+
+fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders) {
+    use graphic::*;
+
+    unsafe {
+        gl::Clear(gl::COLOR_BUFFER_BIT);
+    }
+
+    let vertices = [
+        vert::Pos2 { v: cg::Vector2 { x: 1280.0 / 2.0, y: 1024.0 / 2.0 } },
+        vert::Pos2 { v: cg::Vector2 { x: 1280.0, y: 1024.0 / 2.0 } },
+        vert::Pos2 { v: cg::Vector2 { x: 1280.0 / 2.0, y: 0.0 } },
+    ];
+    let vbo = Vbo::<vert::Pos2>::new(gl::ARRAY_BUFFER).unwrap();
+    let vbo_active = vbo.activate();
+    vbo_active.data(&vertices, gl::STREAM_DRAW);
+
+    let vao = Vao::new(&shaders.flat, &vbo_active).unwrap();
+    let uniform = uni::MColour {
+        matrix: *matrix,
+        colour: cg::Vector4 { x: 1.0, y: 0.5, z: 0.0, w: 1.0 },
+    };
+    vao.activate(&uniform);
+    unsafe {
+        gl::DrawArrays(gl::TRIANGLES, 0, 3);
     }
 }

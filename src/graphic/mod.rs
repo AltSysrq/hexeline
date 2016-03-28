@@ -21,8 +21,9 @@ pub mod vertex;
 pub mod vbo;
 pub mod shader;
 pub mod shaders;
+pub mod vao;
 
 pub use self::vbo::{Vbo,ActiveVbo};
 pub use self::shader::{Shader,ActiveShader};
 pub use self::shaders::*;
-
+pub use self::vao::Vao;

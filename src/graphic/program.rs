@@ -13,8 +13,6 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-#![allow(dead_code)]
-
 use gl::types::*;
 use gl;
 use std;

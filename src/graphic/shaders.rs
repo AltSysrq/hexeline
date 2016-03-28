@@ -29,7 +29,8 @@ pub mod uni {
     use cg;
 
     uniform! {
-        Colour, ColourBinding;
+        MColour, MColourBinding;
+        matrix: cg::Matrix4<f32>,
         colour: cg::Vector4<f32>,
     }
 }
@@ -39,19 +40,19 @@ pub struct ShaderPrograms {
 }
 
 static F_FLAT_SRC : &'static str = include_str!("f_flat.glsl");
-static V_FLAT_SRC : &'static str = include_str!("v_flat.glsl");
+static V_POS2_SRC : &'static str = include_str!("v_pos2.glsl");
 
 impl ShaderPrograms {
     pub fn new() -> Result<ShaderPrograms,String> {
         Ok(ShaderPrograms {
             flat: try!(ProgramHandle::of_vf(
-                "flat", "v_flat", V_FLAT_SRC, "f_flat", F_FLAT_SRC)),
+                "flat", "v_pos2", V_POS2_SRC, "f_flat", F_FLAT_SRC)),
         })
     }
 }
 
 pub struct Shaders<'a> {
-    pub flat: Shader<'a, uni::Colour, vert::Pos2>,
+    pub flat: Shader<'a, uni::MColour, vert::Pos2>,
 }
 
 impl<'a> Shaders<'a> {
