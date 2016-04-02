@@ -15,3 +15,5 @@
 
 mod defs;
 pub use self::defs::*;
+mod frac;
+pub use self::frac::{Frac,UFrac32,SFrac16};
