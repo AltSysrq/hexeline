@@ -18,6 +18,7 @@
 #![allow(dead_code)]
 
 use std::num::Wrapping;
+use cg;
 
 use super::super::praef;
 
@@ -34,7 +35,10 @@ pub type RotationVelocity = i32;
 /// Coordinates are measured in microcells (uc, see CELL), which are not
 /// intended to directly correspond to any real-world unit.
 pub type Coord = i32;
-pub type Velocity = Coord;
+pub type Position = cg::Vector2<Coord>;
+pub type Dimension = cg::Vector2<Coord>;
+pub type Speed = Coord;
+pub type Velocity = cg::Vector2<Coord>;
 pub type Acceleration = Coord;
 /// Unit of time, equal to 1/SECOND of a real second. This is also the unit
 /// used to measure Praefectus instants.
@@ -52,7 +56,7 @@ pub const SECOND : Chronon = 60;
 /// system, and to ensure that chain-sized objects cannot pass through each
 /// other. (Though two objects moving at the speed of light in other directions
 /// potentially could here.)
-pub const SPEED_OF_LIGHT : Velocity = SCREEN;
+pub const SPEED_OF_LIGHT : Speed = SCREEN;
 
 pub const DEG_90 : Angle = Wrapping(16384 << 16);
 pub const DEG_180 : Angle = Wrapping(-32768 << 16);
