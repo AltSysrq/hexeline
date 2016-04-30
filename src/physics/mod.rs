@@ -19,4 +19,4 @@ mod frac;
 pub use self::frac::{Frac,UFrac32,SFrac16};
 mod trig;
 pub use self::trig::{cos,sin};
-mod entity;
+mod particle;
