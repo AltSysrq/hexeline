@@ -294,12 +294,19 @@ pub trait Particle: Clone + Debug {
     /// Type for holding heavier cached data about a particle which can be
     /// regenerated when needed and which should not be stored with historic
     /// versions of the particle.
+    ///
+    /// No guarantees are made about the identity, durability, or consistency
+    /// of the cache. Particles must be prepared for the cache contents to be
+    /// lost or rolled back at any time, and for caches belonging to other
+    /// particles to be provided instead.
     type Cache : Default;
 
     /// Returns the calculated root of the collision tree for this particle.
     fn collision_bounds<'a>(&'a self, cache: &'a Self::Cache)
                             -> &'a CollisionTreeNode;
     /// Returns whether the given event is "addressed to" this particle.
+    ///
+    /// This must be unaffected by calls to `advance_analytic()`.
     fn is_addressee_of(&self, event: &Self::Event) -> bool;
 
     /// Performs an analytic advance of the particle by the given number of
@@ -315,7 +322,10 @@ pub trait Particle: Clone + Debug {
     /// given collision points.
     ///
     /// This function must be commutative and associative, and must not depend
-    /// on the order of the points slice.
+    /// on the order of the points slice. Note that this also applies to
+    /// collisions applied to the `other` particle; effectively, this means
+    /// that this call cannot depend on data that `other.collide_with()` might
+    /// itself mutate.
     ///
     /// Returns whether the particle underwent any state change. If this
     /// returns false, the collision is treated as if it did not occur.
