@@ -107,6 +107,12 @@ pub struct PslotId {
     pub pslot: u32,
 }
 
+impl PslotId {
+    fn new(node: praef::ObjectId, pslot: u32) -> PslotId {
+        PslotId { node: node, pslot: pslot }
+    }
+}
+
 struct PslotCurr<P: Particle> {
     /// The current state of the particle. `None` if the current state has not
     /// yet been computed.
@@ -140,7 +146,8 @@ impl<P: Particle> Default for PslotCurr<P> {
 /// `Pslot::curr_particle()`, and `Pslot::approx_particle()` to read its state
 /// at particular times. Active `Pslot`s are stepped through
 /// `Pslot::collide_with()`, `Pslot::apply_event()`,
-/// `Pslot::advance_nonanalytic()`, and `Pslot::next_frame()`.
+/// `Pslot::advance_nonanalytic()`, `Pslot::spawn()`, and
+/// `Pslot::next_frame()`, in that order.
 ///
 /// An active `Pslot` is said to be in a "transitional" state when it has
 /// pending nonanalytic mutations that have yet to be saved to the state list.
@@ -151,7 +158,6 @@ impl<P: Particle> Default for PslotCurr<P> {
 /// The "start-of-frame state" of a particle is the result of applying analytic
 /// updates to the last non-analytic transition of that particle, up to and
 /// including that frame.
-#[derive(Default)]
 pub struct Pslot<P: Particle> {
     /// The known non-analytic transitions of the pslot, past and future.
     states: Tape<Option<P>>,
@@ -181,6 +187,23 @@ pub struct Pslot<P: Particle> {
     det_limit: Chronon,
 }
 
+// Due to https://github.com/rust-lang/rust/issues/26925 again, need to write
+// Default manually.
+impl<P: Particle> Default for Pslot<P> {
+    fn default() -> Self {
+        Pslot {
+            states: Default::default(),
+            warps: Default::default(),
+            max_collision_subject: Default::default(),
+            curr: Default::default(),
+            now: 0,
+            nonanalytic: false,
+            warped: false,
+            det_limit: 0,
+        }
+    }
+}
+
 impl<P: Particle> Pslot<P> {
     /// Returns whether this `Pslot` is currently active.
     pub fn is_active(&self) -> bool {
@@ -193,7 +216,7 @@ impl<P: Particle> Pslot<P> {
     }
 
     /// Returns whether this `Pslot` is currently in a transitional state.
-    pub fn transitional(&self) -> bool {
+    pub fn is_transitional(&self) -> bool {
         self.nonanalytic
     }
 
@@ -334,12 +357,16 @@ impl<P: Particle> Pslot<P> {
     }
 
     /// Returns a lower bound on when the `Pslot` may next warp.
+    ///
+    /// Warp times specifically indicate the chronon at which the warp occurs;
+    /// thus a warp won't be visible in the start-of-frame state of the pslot
+    /// until the first chronon _after_ the returned value.
     pub fn next_warp(&self) -> Chronon {
         self.warps.next_t().unwrap_or(self.det_limit)
     }
 
     /// Returns whether this `Pslot` is in use at its current time.
-    pub fn in_use(&self) -> bool {
+    pub fn is_in_use(&self) -> bool {
         self.curr.is_some()
     }
 
@@ -383,7 +410,7 @@ impl<P: Particle> Pslot<P> {
     pub fn collided_by(&mut self, other: PslotId, t: Chronon) {
         let val = self.max_collision_subject.entry(other).or_insert(t);
         if *val < t {
-            *val = t
+            *val = t;
         }
     }
 
@@ -409,6 +436,21 @@ impl<P: Particle> Pslot<P> {
                 spawn.push(child);
             }
         }
+    }
+
+    /// Spawns a particle within this pslot.
+    ///
+    /// The pslot must be active, and must not currently be in use. This call
+    /// puts it into a transitional state.
+    pub fn spawn(&mut self, particle: P) {
+        debug_assert!(self.is_active());
+        debug_assert!(!self.is_in_use());
+        self.curr = Some(PslotCurr {
+            value: Some(particle),
+            cache: Default::default(),
+        });
+        self.warped = true;
+        self.nonanalytic = true;
     }
 
     /// Finalises the changes to this `Pslot` for this frame, and advances to
@@ -439,5 +481,321 @@ impl<P: Particle> Pslot<P> {
 
         self.now += 1;
         self.det_limit = self.now;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use super::super::defs::*;
+    use super::super::particle::*;
+    use std::collections::vec_deque::VecDeque;
+    use smallvec::SmallVec;
+
+    const INIT_CD: i32 = 4;
+
+    struct Env;
+    const ENV: &'static Env = &Env;
+    #[derive(Clone,Copy,Debug,Default)]
+    struct Cache;
+
+    #[derive(Clone,Copy,Debug)]
+    struct Event {
+        to: i32,
+        amount: i32,
+        spawn_incr: i32,
+    }
+
+    impl Event {
+        fn new(to: i32, amount: i32, spawn_incr: i32) -> Event {
+            Event { to: to, amount: amount, spawn_incr: spawn_incr }
+        }
+    }
+
+    #[derive(Clone,Copy,Debug)]
+    struct TPart {
+        id: i32,
+        sum: i32,
+        countdown: i32,
+        collision_sum: i32,
+        spawn: i32,
+    }
+
+    impl TPart {
+        fn new(id: i32) -> TPart {
+            TPart {
+                id: id,
+                countdown: INIT_CD,
+                sum: 0,
+                collision_sum: 0,
+                spawn: 0,
+            }
+        }
+    }
+
+    impl Particle for TPart {
+        type Env = Env;
+        type Event = Event;
+        type Cache = Cache;
+
+        fn collision_bounds<'a>(&'a self, _cache: &'a Cache,)
+                                -> &'a CollisionTreeNode {
+            unimplemented!();
+        }
+
+        fn is_addressee_of(&self, event: &Event) -> bool {
+            self.id == event.to
+        }
+
+        fn advance_analytic(&mut self, _cache: &Cache, _env: &Env,
+                            delta: Chronon) {
+            self.countdown -= delta as i32;
+        }
+
+        fn max_analytic_advance(&self, _cache: &Cache, _env: &Env) -> u16 {
+            self.countdown as u16
+        }
+
+        fn collide_with(&mut self, _self_cache: &mut Cache,
+                        other: &Self, _other_cache: &Cache,
+                        _env: &Env,
+                        _points: &[CollisionPoint]) -> bool {
+            self.collision_sum += other.sum;
+            other.sum != 0
+        }
+
+        fn apply_event(&mut self, _cache: &Cache, event: &Event, _env: &Env) {
+            self.sum += event.amount;
+            self.spawn += event.spawn_incr;
+        }
+
+        fn advance_nonanalytic(&mut self, _cache: &mut Cache)
+                               -> Option<NonanalyticTransition<TPart>> {
+            assert!(self.countdown >= 0);
+            if 0 == self.countdown {
+                self.sum += 1;
+                self.countdown = INIT_CD;
+                let mut ret = NonanalyticTransition {
+                    exists: self.sum <= self.collision_sum,
+                    warp: false,
+                    spawn: SmallVec::new(),
+                };
+                for n in 0..self.spawn {
+                    ret.spawn.push(TPart {
+                        id: self.id + n + 1,
+                        sum: 0,
+                        spawn: 0,
+                        .. *self
+                    });
+                };
+                Some(ret)
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn simple_lifecycle() {
+        let mut ps: Pslot<TPart> = Default::default();
+        let mut spawn_vec: Vec<TPart> = Vec::new();
+
+        assert_eq!(0, ps.now());
+        assert!(!ps.is_transitional());
+        assert!(ps.is_active());
+        assert!(!ps.is_in_use());
+        assert_eq!(65535, ps.max_analytic_advance(ENV));
+        assert!(ps.curr_particle(ENV).is_none());
+
+        ps.advance_nonanalytic(ENV, &mut spawn_vec);
+        assert!(spawn_vec.is_empty());
+        ps.spawn(TPart::new(0));
+        assert!(ps.is_transitional());
+        assert_eq!(INIT_CD, ps.curr_particle(ENV).unwrap().countdown);
+        assert!(ps.is_in_use());
+        ps.next_frame();
+
+        for n in 1..INIT_CD+1 {
+            assert_eq!(n, ps.now());
+            assert!(!ps.is_transitional());
+            assert!(ps.is_active());
+            assert!(ps.is_in_use());
+            assert_eq!(INIT_CD - n, ps.curr_particle(ENV).unwrap().countdown);
+
+            ps.advance_nonanalytic(ENV, &mut spawn_vec);
+            assert!(spawn_vec.is_empty());
+            ps.next_frame();
+        }
+
+        assert_eq!(INIT_CD+1, ps.now());
+        assert!(!ps.is_transitional());
+        assert!(ps.is_active());
+        assert!(!ps.is_in_use());
+        assert!(ps.curr_particle(ENV).is_none());
+        ps.advance_nonanalytic(ENV, &mut spawn_vec);
+        assert!(spawn_vec.is_empty());
+        ps.next_frame();
+
+        assert_eq!(INIT_CD+2, ps.now());
+        assert!(!ps.is_transitional());
+        assert!(ps.is_active());
+        assert!(!ps.is_in_use());
+        assert!(ps.curr_particle(ENV).is_none());
+    }
+
+    fn step_cycles(ps: &mut Pslot<TPart>, n: u32) {
+        let mut spawn_vec: Vec<TPart> = Vec::new();
+
+        for _ in 0..n {
+            ps.advance_nonanalytic(ENV, &mut spawn_vec);
+            ps.next_frame();
+        }
+
+        assert!(spawn_vec.is_empty());
+    }
+
+    #[test]
+    fn analytic_seek() {
+        let mut ps: Pslot<TPart> = Default::default();
+
+        step_cycles(&mut ps, 5);
+        assert_eq!(5, ps.now());
+        assert!(ps.is_active());
+        assert!(!ps.is_in_use());
+        ps.seek(3);
+        assert_eq!(3, ps.now());
+        assert!(!ps.is_active());
+        assert!(!ps.is_in_use());
+        ps.seek(2);
+        assert_eq!(2, ps.now());
+        assert!(!ps.is_active());
+        assert!(!ps.is_in_use());
+        ps.seek(4);
+        assert_eq!(4, ps.now());
+        assert!(!ps.is_active());
+        assert!(!ps.is_in_use());
+        ps.seek(5);
+        assert_eq!(5, ps.now());
+        assert!(ps.is_active());
+        assert!(!ps.is_in_use());
+
+        ps.spawn(TPart::new(0));
+        step_cycles(&mut ps, 3);
+        assert_eq!(8, ps.now());
+        assert!(ps.is_in_use());
+        assert_eq!(INIT_CD - 3, ps.curr_particle(ENV).unwrap().countdown);
+        ps.seek(7);
+        assert_eq!(7, ps.now());
+        assert!(ps.is_in_use());
+        assert!(!ps.is_active());
+        assert_eq!(INIT_CD - 2, ps.curr_particle(ENV).unwrap().countdown);
+        ps.seek(6);
+        assert_eq!(6, ps.now());
+        assert!(ps.is_in_use());
+        assert!(!ps.is_active());
+        assert_eq!(INIT_CD - 1, ps.curr_particle(ENV).unwrap().countdown);
+        ps.seek(7);
+        assert_eq!(7, ps.now());
+        assert!(ps.is_in_use());
+        assert!(!ps.is_active());
+        assert_eq!(INIT_CD - 2, ps.curr_particle(ENV).unwrap().countdown);
+        ps.seek(8);
+        assert_eq!(8, ps.now());
+        assert!(ps.is_in_use());
+        assert!(ps.is_active());
+        assert_eq!(INIT_CD - 3, ps.curr_particle(ENV).unwrap().countdown);
+
+        step_cycles(&mut ps, 7);
+        assert_eq!(15, ps.now());
+        assert!(!ps.is_in_use());
+        ps.seek(13);
+        assert_eq!(13, ps.now());
+        assert!(!ps.is_in_use());
+        assert!(!ps.is_active());
+        ps.seek(15);
+        assert_eq!(15, ps.now());
+        assert!(ps.is_active());
+        assert!(!ps.is_in_use());
+    }
+
+    #[test]
+    fn nonanalytic_seek() {
+        let mut ps: Pslot<TPart> = Default::default();
+
+        step_cycles(&mut ps, 4);
+        ps.spawn(TPart::new(0));
+        ps.next_frame();
+        step_cycles(&mut ps, 2);
+        ps.apply_event(&Event::new(0, -2, 0), ENV);
+        ps.next_frame();
+        assert_eq!(8, ps.now());
+        step_cycles(&mut ps, 12);
+        assert_eq!(20, ps.now());
+        assert!(!ps.is_in_use());
+
+        ps.seek(2);
+        assert!(!ps.is_active());
+        assert!(!ps.is_in_use());
+        assert_eq!(4, ps.next_warp());
+
+        ps.seek(5);
+        assert!(!ps.is_active());
+        assert!(ps.is_in_use());
+        assert_eq!(INIT_CD - 1, ps.curr_particle(ENV).unwrap().countdown);
+        assert_eq!(0, ps.curr_particle(ENV).unwrap().sum);
+
+        ps.seek(6);
+        assert!(!ps.is_active());
+        assert!(ps.is_in_use());
+        assert_eq!(INIT_CD - 2, ps.curr_particle(ENV).unwrap().countdown);
+        assert_eq!(0, ps.curr_particle(ENV).unwrap().sum);
+
+        ps.seek(9);
+        assert!(!ps.is_active());
+        assert!(ps.is_in_use());
+        assert_eq!(INIT_CD - 1, ps.curr_particle(ENV).unwrap().countdown);
+        assert_eq!(-1, ps.curr_particle(ENV).unwrap().sum);
+        assert_eq!(16, ps.next_warp());
+
+        ps.seek(16);
+        assert!(!ps.is_active());
+        assert!(ps.is_in_use());
+        assert_eq!(0, ps.curr_particle(ENV).unwrap().countdown);
+        assert_eq!(0, ps.curr_particle(ENV).unwrap().sum);
+        assert_eq!(16, ps.next_warp());
+
+        ps.seek(17);
+        assert!(!ps.is_active());
+        assert!(!ps.is_in_use());
+        assert_eq!(20, ps.next_warp());
+
+        ps.seek(20);
+        assert!(ps.is_active());
+        assert!(!ps.is_in_use());
+        assert_eq!(20, ps.next_warp());
+    }
+
+    #[test]
+    fn damage() {
+        let mut ps: Pslot<TPart> = Default::default();
+        let id1 = PslotId::new(0, 0);
+        let id2 = PslotId::new(1, 1);
+        let mut damaged: VecDeque<PslotId> = VecDeque::new();
+
+        step_cycles(&mut ps, 10);
+        ps.collided_by(id1, 4);
+        ps.collided_by(id2, 3);
+        ps.collided_by(id2, 5);
+        ps.collided_by(id2, 2);
+
+        ps.seek(5);
+        assert!(!ps.is_active());
+        ps.damage(&mut damaged);
+        assert_eq!(1, damaged.len());
+        assert_eq!(id2, damaged[0]);
+
+        damaged.clear();
+        ps.damage(&mut damaged);
+        assert!(damaged.is_empty());
     }
 }
