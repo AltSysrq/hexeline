@@ -15,8 +15,9 @@
 
 #![allow(dead_code)]
 
-use std::collections::hash_map::HashMap;
-use std::collections::vec_deque::VecDeque;
+use std::collections::HashMap;
+use std::collections::VecDeque;
+use smallvec::SmallVec;
 
 use praef;
 use super::defs::*;
@@ -55,6 +56,16 @@ impl<T: Default> Default for Tape<T> {
 }
 
 impl<T: Default> Tape<T> {
+    fn new(init_value: T) -> Self {
+        Tape {
+            ix: 0,
+            values: vec![TapeElement {
+                t: -1,
+                v: init_value
+            }],
+        }
+    }
+
     fn seek(&mut self, target: Chronon) {
         while self.ix > 0 && self.values[self.ix].t >= target {
             self.ix -= 1;
@@ -187,24 +198,39 @@ pub struct Pslot<P: Particle> {
     det_limit: Chronon,
 }
 
-// Due to https://github.com/rust-lang/rust/issues/26925 again, need to write
-// Default manually.
-impl<P: Particle> Default for Pslot<P> {
-    fn default() -> Self {
+impl<P: Particle> Pslot<P> {
+    /// Creates a `Pslot` which holds a particle spawned "primordially", ie,
+    /// before the beginning of time.
+    ///
+    /// The initial time for the pslot is specified by `t`.
+    pub fn spawn_primordial(particle: P, t: Chronon) -> Self {
+        Pslot {
+            states: Tape::new(Some(particle)),
+            warps: Default::default(),
+            max_collision_subject: Default::default(),
+            curr: Some(Default::default()),
+            now: t,
+            nonanalytic: false,
+            warped: false,
+            det_limit: t,
+        }
+    }
+
+    /// Creates a `Pslot` which has contained no particle since the beginning
+    /// of time, whose current time is given by `t`.
+    pub fn empty(t: Chronon) -> Self {
         Pslot {
             states: Default::default(),
             warps: Default::default(),
             max_collision_subject: Default::default(),
             curr: Default::default(),
-            now: 0,
+            now: t,
             nonanalytic: false,
             warped: false,
-            det_limit: 0,
+            det_limit: t,
         }
     }
-}
 
-impl<P: Particle> Pslot<P> {
     /// Returns whether this `Pslot` is currently active.
     pub fn is_active(&self) -> bool {
         self.now >= self.det_limit
@@ -248,6 +274,18 @@ impl<P: Particle> Pslot<P> {
                     }
                 }
             }
+        }
+    }
+
+    /// Prepares the pslot for usage in the given frame.
+    ///
+    /// If `now()` is greater than `t`, the pslot is `seek()`ed back to `t`.
+    ///
+    /// If `t` is greater than `now()` and equal to the deterministic limit,
+    /// the pslot is `seek()`ed to `t`, making it active.
+    pub fn prepare_frame(&mut self, t: Chronon) {
+        if t < self.now || (t > self.now && t == self.det_limit) {
+            self.seek(t);
         }
     }
 
@@ -416,25 +454,26 @@ impl<P: Particle> Pslot<P> {
 
     /// Performs the non-analytic step for this `Pslot`.
     ///
-    /// If this step spawns new particles, they are added to `spawn`.
-    ///
     /// This may only be called for active particles, and may put them in a
     /// transitional state.
-    pub fn advance_nonanalytic(&mut self, env: &P::Env, spawn: &mut Vec<P>) {
+    ///
+    /// Returns any particles spawned by this step.
+    pub fn advance_nonanalytic(&mut self, env: &P::Env)
+                               -> SmallVec<[P;1]> {
         debug_assert!(self.is_active());
 
         let opt_result = self.map_particle(
             env, |p, cache| p.advance_nonanalytic(cache)).unwrap_or(None);
-        if let Some(mut result) = opt_result {
+        if let Some(result) = opt_result {
             self.nonanalytic = true;
             self.warped |= result.warp;
             if !result.exists {
                 self.curr = None;
                 self.warped = true;
             }
-            for child in result.spawn.into_iter() {
-                spawn.push(child);
-            }
+            result.spawn
+        } else {
+            SmallVec::new()
         }
     }
 
@@ -481,6 +520,14 @@ impl<P: Particle> Pslot<P> {
 
         self.now += 1;
         self.det_limit = self.now;
+    }
+}
+
+// Due to https://github.com/rust-lang/rust/issues/26925 again, need to write
+// Default manually.
+impl<P: Particle> Default for Pslot<P> {
+    fn default() -> Self {
+        Pslot::empty(0)
     }
 }
 
@@ -598,7 +645,6 @@ mod test {
     #[test]
     fn simple_lifecycle() {
         let mut ps: Pslot<TPart> = Default::default();
-        let mut spawn_vec: Vec<TPart> = Vec::new();
 
         assert_eq!(0, ps.now());
         assert!(!ps.is_transitional());
@@ -607,8 +653,7 @@ mod test {
         assert_eq!(65535, ps.max_analytic_advance(ENV));
         assert!(ps.curr_particle(ENV).is_none());
 
-        ps.advance_nonanalytic(ENV, &mut spawn_vec);
-        assert!(spawn_vec.is_empty());
+        ps.advance_nonanalytic(ENV);
         ps.spawn(TPart::new(0));
         assert!(ps.is_transitional());
         assert_eq!(INIT_CD, ps.curr_particle(ENV).unwrap().countdown);
@@ -622,8 +667,7 @@ mod test {
             assert!(ps.is_in_use());
             assert_eq!(INIT_CD - n, ps.curr_particle(ENV).unwrap().countdown);
 
-            ps.advance_nonanalytic(ENV, &mut spawn_vec);
-            assert!(spawn_vec.is_empty());
+            ps.advance_nonanalytic(ENV);
             ps.next_frame();
         }
 
@@ -632,8 +676,7 @@ mod test {
         assert!(ps.is_active());
         assert!(!ps.is_in_use());
         assert!(ps.curr_particle(ENV).is_none());
-        ps.advance_nonanalytic(ENV, &mut spawn_vec);
-        assert!(spawn_vec.is_empty());
+        ps.advance_nonanalytic(ENV);
         ps.next_frame();
 
         assert_eq!(INIT_CD+2, ps.now());
@@ -644,14 +687,10 @@ mod test {
     }
 
     fn step_cycles(ps: &mut Pslot<TPart>, n: u32) {
-        let mut spawn_vec: Vec<TPart> = Vec::new();
-
         for _ in 0..n {
-            ps.advance_nonanalytic(ENV, &mut spawn_vec);
+            ps.advance_nonanalytic(ENV);
             ps.next_frame();
         }
-
-        assert!(spawn_vec.is_empty());
     }
 
     #[test]
