@@ -5,7 +5,5 @@ authors = ["Jason Lingle <jason@lin.gl>"]
 
 [dependencies]
 sdl2 = "0.16.1"
-libc = "0.2.7"
-gl = "0.6.0"
-cgmath = "0.7.0"
-smallvec = "0.1.7"
+gl = "0.6.2"
+cgmath = "0.14.1"
