@@ -13,16 +13,12 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-#![feature(btree_range,collections_bound)]
-
 extern crate libc;
 extern crate sdl2;
 extern crate gl;
 extern crate cgmath as cg;
 extern crate smallvec;
 
-mod praef;
-mod physics;
 mod graphic;
 
 use std::io;

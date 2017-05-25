@@ -121,3 +121,19 @@ dependencies = [
  "bitflags 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
+[metadata]
+"checksum bitflags 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "32866f4d103c4e438b1db1158aa1b1a80ee078e5d77a59a2f906fd62a577389c"
+"checksum cgmath 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "75e93b3eb66e74ffb946a69ff54c6026c1399960241c843f249ea0127b96b9f6"
+"checksum gl 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "fd5838791ecce5c065f917eee36dd21407df3f01f8f95df8c5e853437c7bea12"
+"checksum gl_generator 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "3305a6b4fc8848091848d23cb92c1c9e8a8bc3528d7b07d4b86ca4f002fece59"
+"checksum khronos_api 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "09c9d3760673c427d46f91a0350f0a84a52e6bc5a84adf26dc610b6c52436630"
+"checksum lazy_static 0.1.15 (registry+https://github.com/rust-lang/crates.io-index)" = "547fd11b0400fbab39f7a6df53c648cfb01b977233015d9e0784d595a5a6c449"
+"checksum libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)" = "4870ef6725dde13394134e587e4ab4eca13cb92e916209a31c851b49131d3c75"
+"checksum log 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)" = "038b5d13189a14e5b6ac384fdb7c691a45ef0885f6d2dddbf422e6c3506b8234"
+"checksum num 0.1.31 (registry+https://github.com/rust-lang/crates.io-index)" = "be45b3e341522564415a07118d7cf44896d0919e7a1bb21d59ad82af48256324"
+"checksum rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)" = "2791d88c6defac799c3f20d74f094ca33b9332612d9aef9078519c82e4fe04a5"
+"checksum rustc-serialize 0.3.18 (registry+https://github.com/rust-lang/crates.io-index)" = "9cf81518cd579f8a9c58c0a71328bdb9be15c754181261da82583092dc8a7ff0"
+"checksum sdl2 0.16.1 (registry+https://github.com/rust-lang/crates.io-index)" = "e7f18f5878c752274f527804bdd6698c38d9b20317a0a56db77d84032498941e"
+"checksum sdl2-sys 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)" = "48bd067cbfaa00649afd649add954e8221af03815e2e261fab6caf274d77c4d1"
+"checksum smallvec 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "c6f6c83ba92e9fb79e978b33b3ca68960b73e768e929ae48f15ef7b6a98ba8fd"
+"checksum xml-rs 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "f11ef7864e55d06a38755beaf03ab70139a04e619acfe94ef800b11bd79eb52c"
