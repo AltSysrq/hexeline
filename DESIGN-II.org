@@ -1,0 +1,991 @@
+* Abendstern Retrospective
+
+** What went well
+
+Ship design/construction was generally very enjoyable.
+
+Realish physics made things challenging.
+
+Damage applied to individual cells adds depth to ship design.
+
+Power + capacitors made for really good resource management.
+
+Catastrophic failure of power generation required careful layout of ships to
+minimise risk of cascading failure.
+
+Restricting orientation of weapons/engines produced ships which had a
+distinctive shape and clear layout.
+
+The "brake" control, instead of reverse thrust, is intuitive and makes control
+a lot easier.
+
+** What went poorly
+
+The tech-level system (called "classes" and following Japanese racing game
+convention) was confusing and fragmented ship development.
+
+Class A was a trainwreck. The finite-use Gatling Plasma Burst Launcher caused
+the weapon to either be totally unused, or be used in a way that largely
+negated the finite-use aspect. The penatrating property of the Monphasic Energy
+Emitter bypassed most armour mechanics. The Particle Emitter was useless
+because nobody designed ships vulnerable to it.
+
+The stealth mechanic was useless since no game mode had any benefit for being
+stealthy.
+
+Computing cell connections based on physical position combined with a system
+causing irrational numbers to arise caused a myriad of problems and occasional
+exploits.
+
+Due to the difficulty of reasoning about cell positions, the system allowed
+"stacking" things like weapons and engines in ways that probably shouldn't have
+been permitted.
+
+Weapon count, engine count, and energy to supply them increase quadratically
+with ship radius, but vulnerability to incoming fire only increases linearly,
+resulting in increasingly large ships as time went on.
+
+Throttle control was largely unused, since all post-generation-0 ships were
+designed to simply operate at 100% throttle at all times.
+
+Weapon energy level system was used by players, but minimally -- essentially,
+each ship had one static energy level humans used. The AI players could vary
+the energy level instantaneously and use the optimal for each situation, which
+gave the AI an inhuman advantage.
+
+Default controls were counter-convention.
+
+AI ended up being much too strong for new players.
+
+Guided weapons don't make much sense at this scale.
+
+Configurable systems made things more complicated without much benefit.
+
+The cell/system distinction was confusing for some people, and complicated the
+implementation.
+
+State-based replication is awkward, high-bandwidth, and generally impossible to
+protect from cheating.
+
+* Learning from Reassembly
+
+Only listing things relevant to the design of Hexeline here.
+
+** Positives
+
+Inter-ship collision is actually viable.
+
+Resources and the "ecosystem" in space made space less boring.
+
+Unifying cells and systems works well.
+
+** Negatives
+
+Same quadratic-power-linear-vulnerability issue as Abendstern.
+
+Allowing weapons/engines to be oriented arbitrarily leads to homogenous
+cube-shaped ships.
+
+Conflating cell functionality and shape has frustrating consequences,
+especially when irrational numbers come into play.
+
+* New Controls
+
+General expectations from convention: WASD is for directional movement; mouse
+buttons are for weapons.
+
+WASD: Forward / brake / strafe.
+
+Shift: Overdrive engines.
+
+Alt: Run accessories.
+
+Left click: Fire current weapon.
+
+Right click: Alt-fire current weapon.
+
+R: Reload/recharge current weapon.
+
+Scroll: Change weapons (as in Sauerbraten, but with display to make it clearer
+how it works)
+
+Tab: Open ship management console.
+
+* High-Level
+
+As with Abendstern and Reassembly, the game is a 2D spaceshooter built around
+the players designing and piloting their own ships. Unlike Abendstern,
+symmetric multiplayer (considering AI to be "players") is deemphasised in
+favour of single-player challenges and missions. Unlike both Abendstern and
+Reassembly, ship editing is not a separate mode, but something done on the fly,
+and in some modes (including all multiplayer modes) in real-time.
+
+Multiple races with unique properties and components are available to diversify
+play.
+
+Space is populated with asteroids containing resources and organisms which
+consume them and each other. Gathering these resources is needed to add or
+replace components on the player's ship.
+
+* Principles
+
+Where the player has the choice between _n_ options that should be of
+approximately equal power, there should be a rock-paper-scissors type of
+relationship between them, so that any design is inherently vulnerable to
+something and so there is always non-zero incentive to choose each of the
+options, even if their power levels
+
+Some disadvantages of increasing ship size need to increase quadratically
+rather than linearly, so that "make a bigger ship" is not a dominant strategy.
+
+* Ship/Cell Mechanics
+
+** Geometry
+
+A ship is composed of some number of cells. Cells are placed on a regular
+hexagonal grid, with the flat side of each hexagon aligned with the X axis.
+Most cells occupy exactly one hexagon, but some may occupy more than one.
+
+There is an absolute concept of direction throughout the whole ship, and
+certain cells will in some way "point" in a particular direction or otherwise
+require certain properties of the surrounding geometry and orientation.
+
+All cells in a ship must form a single connected component. If a cell bridging
+two connected components is destroyed, the ship splits in two.
+
+** Energy Management
+
+*** Power
+
+Most cells require an active power supply to function. Like in Abendstern and
+Reassembly, power is produced in dedicated power production cells. Unlike in
+Abendstern and Reassembly, power is not automatically transported from power
+source to power sink. Instead, a power producing cell only supplies its
+immediate neighbours. Power conduit cells must be used to further distribute
+power.
+
+Power conduits introduce a trade-off in the layout of a ship. Keeping all power
+cells together in the depths of the ship (as is standard in Abendstern) is
+safe, but requires more area spent on infrastructure to transport the power
+from source to sink. Alternatively, power can be more distributed, but this
+makes the power cells (which fail catastrophically) much more vulnerable.
+
+The mechanic also impedes scaling ships to larger sizes with a centralised
+power layout. While area for power generation increases quadratically, the
+number of parallel power conduits to carry the power must also increase
+quadratically, but _length_ of these lines also increases linearly with the
+radius of the ship, so area dedicated to power infrastructure increases
+_cubically_. This scaling factor is minor compared to the heat mechanic,
+though.
+
+Power cells cannot immediately adjust to fluctuating power demand, but instead
+take some time to increase output to match demand, or scale back output while
+still incurring the downsides of higher production.
+
+Weapons no longer require external capacitors to provide power bursts. Instead,
+these weapons have their own internal charge store which can be recharged by
+the player as desired. Capacitors still exist and can be used to smooth over
+generator lag, temporarily operate over 100%, etc. This decision is to simplify
+starting construction (you don't *need* capacitors, so it's one less thing to
+think of) and for the reload mechanic, which adds another tactical decision to
+combat.
+
+*** Heat
+
+Most active cells, especially power, engine, and weapon cells, produce waste
+heat during functioning. Power conduits also release heat proportional to the
+square of the power they conduct. Heat increases the temperature of a cell;
+increased temperature reduces damage resistence and eventually leads to
+destruction of the cell.
+
+Heat is passively dissipated only through cell edges exposed to external space
+(interior space within the ship does not count). Heat naturally flows from hot
+to cool cells. Heat pipe cells can be used to conduct heat away from sources to
+the extremities more quickly.
+
+Heat pipes and power conduits can be combined into one cell.
+
+Heat management is important for capping ship size and encouraging more
+interesting-looking exteriors. Increasing the radius of a ship design increases
+area available for power generation quadratically, but this also increases heat
+production quadratically, while surface area only increases linearly.
+Increasing surface area requires irregular layouts with lower connectivity,
+which makes the ship more vulnerable.
+
+** Damage
+
+Every cell tracks its own HP. Maximum cell HP for most Terran cells is 100.
+
+Effects which reduce cell HP will not reduce it below 0. If a cell has 0 HP
+after an HP reduction effect, the cell becomes _critically damaged_. When a
+cell becomes critically damaged, several things happen:
+
+- Cells which can fail catastrophically do so.
+
+- There is a certain chance of the cell being destroyed by the HP reduction
+  effect. This chance depends on race as well as whether or not the HP was
+  non-zero before the effect.
+
+- The cell begins drawing the maximum amount of power and producing maximum
+  heat (proportional to power supplied) possible for the cell type.
+
+- The cell stops serving its function, except for engines, which have a chance
+  of outputting full forward thrust instead.
+
+A cell which overheats instantly becomes critically damaged. A critically
+damaged cell whose heat exceeds 150% the heat limit is destroyed.
+
+A damaged cell on a live ship is repaired if the ship has not sustained any
+damage for some interval (probably 10s). Critically damaged cells are also
+repaired after twice that interval.
+
+Weapons deal damage in several categories:
+
+*** Impact Damage
+
+Impact damage is simply damage caused by physical impact. Impact damage simply
+reduces the HP of the affected cells. Cells have inherent damage resistance to
+impact damage which reduces as temperature increases.
+
+*** Thermal Damage
+
+Thermal damage increases the temperature of the affected cells, but does not
+directly cause any HP reduction.
+
+*** Coulomb Damage
+
+Coulomb damage causes the affected cells to malfunction as if they were
+critically damaged for a short time (but they are not actually critically
+damaged --- the cell is never destroyed, the normal heat limit applies, etc).
+Coulomb damage propagates through the ship as would power if the affected cells
+were power sources.
+
+*** General Strategies
+
+Impact damage is best for fast assaults since it immediately reduces HP.
+However, it is all-or-nothing, since a damaged cell still functions fully and
+will be eventually repaired. Impact damage is also viable for slow-and-steady
+attrition.
+
+Thermal damage tends to be situational. It can be used to weaken armour or to
+overheat a ship which depends on conducting lots of heat from a central core.
+Unlike impact damage, its effects dissipate even during active combat, making
+it unsuitable for attrition.
+
+Coulomb damage can easily partially disable a ship and is very powerful against
+vulnerable ships, but is also easy to defend against.
+
+** Tech Levels
+
+Cells are divided into three tech levels: I, II, and III. Level I cells require
+no Tech to construct; level II require some tech, and level III cells require
+quite a bit. Most cell types have a full tech level progression from their
+starting level to III, though some may only exist at particular levels. In
+general, higher level cells perform the main function of the type better than
+the lower level, but have some downside that makes it harder to manage.
+
+** Cell Taxonomy
+
+*** Cockpit
+
+As in Abendstern and Reassembly, one special cell serves as the identity of the
+ship. Since Hexeline is oriented to fighters, we call this the "cockpit" here,
+rather than "bridge" (Abendstern) or "control centre" (Reassembly).
+
+The cockpit identifies which connected component of a ship is the "active" one
+after a split, and is notionally where the unconsumed resources of the player
+are stored.
+
+A ship is considered neutralised if:
+
+- The cockpit is destroyed.
+
+- The rotational speed of the cockpit exceeds a certain threshold for a certain
+  time.
+
+- There are no engine, power, or weapon cells on the ship for 10 seconds.
+
+*** Power Generation
+
+The general trade-offs between the power cell types involves the strength of
+their catastrophic failure, their power:heat ratios at various utilisation
+levels, how quickly they respond to power demand changes, and what the negative
+effects of over-supply are.
+
+**** Mechanical
+
+Mechanical generators offer low peak output and have poor power:heat ratios at
+high utilisation, but respond to demand changes quickly (order of half a
+second) and have excellent power:heat ratios at low utilisation. They also have
+very mild catastrophic failures, only inflicting some damage on their immediate
+neighbours. There is no extra penalty for over-supply.
+
+**** Fission
+
+Nuclear fission generators have medium peak output and good power:heat ratios
+in general, but take multiple seconds to respond to demand changes.
+Catastropic failure severely damages cells in a few cells radius. There is no
+extra penalty for over-supply.
+
+**** Fusion
+
+Nuclear fusion generators have high peak power output, but only have good
+power:heat ratios at high utilisation. They respond to demand changes quickly,
+but during over-supply produce an extraordinarily large amount of waste heat.
+Catastrophic failure is more severe than Fission but has a smaller radius.
+
+**** General Strategies
+
+Mechanical generators is ideal for ships designed for short assaults. Low heat
+production during inactivity means the ship does not need much heat
+infrastructure, and quick supply response means it can go from inactive to
+active very quickly. Ships based on mechanical generation will have difficulty
+in sustained combat, however, since limited output may make it hard to operate
+engines and weapons simultaneously, and compensating for this with more
+generations reduces agility due to weight. Heat build-up could also be
+problematic.
+
+Fission generation is preferable for long-term combat. Once the generators have
+reached the needed output, they will tend to maintain it, and can sustain the
+higher output without the heat issues of mechanical generators.
+
+Fusion has some of the same benefits as mechanical, but it can also sustain
+high output over time. However, heat management is far more difficult,
+particularly due to over-supply; a possibility for advanced players is to
+manually ensure that energy keeps being consumed at similar levels (or that
+demand is always above supply) so that over-supply flares don't happen.
+
+*** Power Utilities
+
+**** Capacitor
+
+Stores power. When power supply is under demand, charge is drained from the
+capacitor as needed to satisfy it (at whatever rate the power distribution
+system can move that power). When supply satisfies demand, the capacitor(s)
+demand power flow inversely proportional to their charge. Charging and
+discharging capacitors produces some heat.
+
+Capacitors can be used to smooth over power supply fluctuations, to absorb some
+over-supply from fusion power, or to briefly run at greater than 100% of true
+power supply.
+
+A critically damaged capacitor rapidly converts its stored charge into heat.
+
+**** Accessories
+
+Accessories are almost purely cosmetic items which can be activated at will.
+While activated, they draw substantial amounts of power, which could be used
+tactically to spin generators up early, keep generation level high, or reduce
+fusion over-supply effects.
+
+*** Engines
+
+Unlike Abendstern and Reassembly, all engines in Hexeline face straight
+backward. Engines also provide a braking factor (as in Abendstern) and free
+torque which may be independent of the engine actually running (mostly as in
+Abendstern).
+
+Engines can be "overdriven" to produce 150% their normal thrust in exchange for
+much higher power use and heat production.
+
+**** Particle Accelerator
+
+The particle accelerator accelerates a limitless internal propellant to
+relativistic speeds. It provides a moderate amount of thrust, as well as a
+moderate amount of torque independent of operation and responds instantly to
+throttle changes. It takes a moderate amount of power and produces relatively
+little heat when not being overdriven.
+
+Requires all cell slots with a Y coordinate greater than its own and
+overlapping X coordinates to be empty.
+
+**** Bussard Ramjet
+
+The Bussard ramjet collects stellar material, compresses it until it fuses, and
+expells the result out the back. It provides a large amount of thrust, high
+torque when running, and poor torque when not running. It takes around a second
+to go from 0% to 100% operation and back. Power demand is generally low, but
+depends on the dot product of the ship's heading and velocity, with greater
+values requiring less power. While running, it produces a large amount of heat.
+
+Requires all cell slots forward and back along a 30 degree cone to be empty.
+
+If it does not receive enough power while operating above 0%, it "flames out",
+and everything in its reserved path and adjacent, several cells forward and
+back, takes some amount of thermal damage.
+
+**** Impulse Drive
+
+Manipulates spacetime at a small scale to accelerate the ship. Provides a small
+amount of thrust which reduces as speed increases, moderate torque independent
+of operation, and responds instantly to throttle changes. It requires high
+power supply but produces very little heat when not overdriven.
+
+Requires the cell slots to its immediate left or right to be free, as well as
+all cells with a greater Y coordinate and overlapping X coordinate (with those
+slots to the left or right).
+
+**** General Strategies
+
+Particle accelerators are easiest to use and are efficient in most situations.
+
+Bussard ramjets require more skill to use, but require less power than particle
+accelerators and provide more agility at the same time. They require more heat
+management, however, which may make sustained combat hazardous.
+
+Impulse drives require less horizontal space than particle accelerators since
+they can be stacked (by sharing the free cell slots) and produce more torque
+naturally, but their high power demand is harder to fullfil, and reducing
+thrust with increased speed makes it difficult to run away from or chase ships
+using other technologies.
+
+*** Shielding / Armour
+
+**** Armour
+
+Armour cells are completely passive, taking no power and producing no heat.
+They do not do anything in particular, but have substantially greater max HP
+than normal cells. They thus add a protective layer against incoming damage.
+
+**** Passive Shield
+
+Draws a constant, moderate amount of power to project a circular energy barrier
+centred on the shield generator. The barrier has a certain amount of HP; all
+damage types simply reduce the barrier's HP. If the HP reaches zero, the
+barrier ceases to exist. After some time of the barrier not taking damage, its
+HP begins to regenerate. This process does not require extra power.
+
+**** Active Shield
+
+Creates a barrier like the passive shield, but with a much smaller, irregular
+shape but more HP, and draws less power. When anything heading towards the cell
+comes within its area of effect, it increases the deformation of the barrier to
+meet the object, drawing more power. There is a short cooldown before it can
+change the barrier's shape again.
+
+**** General Strategies
+
+Armour selection is intertwined with the weapon categories and is discussed
+there.
+
+*** Weapon Categories
+
+**** Precision
+
+Precision weapons have a moderate rate of fire, a small to moderate clip size,
+and always fire their projectiles perfectly forward. Projectiles only damage
+the point of impact.
+
+**** Spread
+
+Spread weapons have a high rate of fire, a large clip size, but randomly
+distribute their projections over an angle. Projectiles only damage the point
+of impact.
+
+**** Bomb
+
+Bomb weapons have a low rate of fire (and fire one at a time instead of in
+salvos), a very small clip size (usually 1), and fire perfectly forward.
+Projectiles damage everything within an area of effect.
+
+**** Melee
+
+Melee weapons operate on continuous power draw when fired and have
+near-point-blank range. They may have a limited area of affect for damage or be
+point effects.
+
+**** General Strategies
+
+Each of the three ranged weapon classes is primarily effective against one
+armour type and less effective against the other two.
+
+Precision weapons are strongest against passive shields, since they can
+repeatedly hit the same shield and knock its HP down to 0 quickly. They lack
+penetration to bypass armour (though are still reasonably effective against
+armour since they can hit the same cell every shot) and can be stopped by
+active shields even during the shields' cooldown.
+
+Spread weapons are strongest against active shields, as the shield is not able
+to reshape itself quickly enough to stop most of the fire. They are less
+effective against armour and static shields since they cannot reliably hit the
+same location.
+
+Bomb weapons are strongest against armour since their area of effect partially
+bypasses the layer of protection. Shields usually are able to cause bombs to
+detonate before the ship itself is within the area of effect, and the low rate
+of fire allows the shields to recover before the next impact.
+
+Melee weapons may be effective against all armour/shield types, but are
+balanced by the awkwardness and risk of actually getting within melee range.
+
+** Materials
+
+Various materials are used as the cost of building ship cells. Materials are
+divided into three categories: Natural, refined, and tech.
+
+Materials are always conserved, except for Tech, which slowly accumulates.
+
+*** Natural Materials
+
+Natural materials are found in asteroids and rubble. They are generally
+abundant and used for simple cells.
+
+**** Compound
+
+Compound is the abstract material which physically manifests as a hexagonal
+cell. All cells therefore have a Compound cost of 1.
+
+**** Metal
+
+Metal is a commonly occurring material representing simple, non-conductive
+metals in general.
+
+**** Conductor
+
+Representing general electric conductors, Conductor is a moderately abundant
+material.
+
+**** Silicon
+
+Silicon is used for cells which need semiconductors and for some other
+purposes. It is somewhat abundant.
+
+**** Uranium
+
+Exclusively used for weapons and fission reactors, uranium is a rare material.
+
+*** Refined Materials
+
+Refined materials are produced by entities in the ecosystem in a 1:1 ratio from
+corresponding natural materials. A refined material that ends up embedded in
+rubble reverts to the natural material.
+
+**** Enhance Compound
+
+Refined from [[Compound]] by predators. Used in cells requiring higher levels of
+durability.
+
+**** Alloy
+
+Refined from [[Metal]] by certain bugs. Used in cells needing high durability or
+containing high-speed or high-temperature components.
+
+**** Superconductor
+
+Refined from [[Conductor]] by certain bugs and predators. Used in cells requiring
+large amounts of power.
+
+**** Glass
+
+Refined from [[Silicon]] by glass plants. Used in a few types of cells.
+
+**** Plutonium
+
+Refined from [[Uranium]] when a cell containing Uranium is surrounded on all six
+sides by other cells also containing Uranium. This arrangement happens by a
+certain type of bug which uses uranium-rich cells to construct nests. Used for
+a few things like high-level fission reactors.
+
+*** Tech
+
+Tech represents materials and arrangements imported from outside Eden. The
+cockpit cell always contains 1 tech. Level 2 cells (except those on Pirate
+ships) contain a small amount of Tech; Level 3 cells (again, Pirates excepted)
+contain a large amount of Tech.
+
+In single-player modes, Tech puts an absolute speed limit on the rate at which
+the player moves to more powerful technologies. In multiplayer, it accumulates
+over time since each spawned ship adds 1 Tech. This causes the power balance to
+swing increasingly violently as players in general move up in tech level.
+
+A particular type of bug collects Tech lost to the environment and has a
+penchant for trying to attack ships, which ensures Tech returns to circulation
+instead of being lost.
+
+* Races
+
+There are 5 races for the player to choose from, with different stats and
+unique abilities and restrictions, which diversifies play.
+
+** Terrans
+
+The base race. No particular upsides or downsides.
+
+Colour: White / green / black
+Aesthetic: Clean, sort of clinical, "stamped out in a factory" feel, synthetic
+Shields: Passive at Level I, Active at Level II
+Weapons: Precision at Level I, Bomb at Level III
+Engines: Particle Accelerator at Level I, Impulse Drive at Level III
+Power: Fission at Level I, Fusion at Level II
+
+The official military and paramilitary forces of unified Earth.
+
+** Pirates
+
+Upsides: Higher-level cells are strictly better than lower-level counterparts.
+A cell which is Critically Damaged as a direct result of an enemy projectile
+which is then repaired to full HP advances to the next level for free.
+
+Downsides: No ability to directly construct non-Level-I cells. Functions which
+are not available until upper levels manifest as cells which have no function
+at lower levels and progress into those cell types.
+
+Colour: Dark grey / mute violet / white
+Aesthetic: Industrial, dirty, rusty, smoke, slapped together, iron
+Shields: Armour at Level I, Passive at Level III
+Weapons: Spread at Level I, Bomb at Level II
+Engines: Bussard Ramjet at Level I, Particle Accelerator at Level II
+Power: Mechanical at Level I, Fission at Level III
+
+The remnants of a rebellion against the unified Earth nation which now resides
+in a semi-organised state in the Centauri system. Their technology is decades
+out of date, but they remain a formidable force through sheer tenacity.
+
+** Replicants
+
+Upsides: Can construct any cell type visible on a live enemy ship within a
+certain range.
+
+Downsides: No native cells above Level I. Native cells are inferior to
+comparable cells of other races.
+
+Colour: Yellow / black / silver
+Aesthetic: Clockwork, steam, brass
+Shields: Armour at Level I
+Weapons: Spread at Level I
+Engines: Bussard Ramjet at Level I
+Power: Mechanical at Level I
+
+A mostly non-intelligent family of self-replicating military robots introduced
+by one of the losing contenders for governance of unified Earth. Their own
+technology is half a century obsolete, but they have the unique ability to
+replicate new technology they see.
+
+** Marians
+
+Upsides: Greater max HP and heat capacity on cells. High weapon damage. 50%
+resistance to AOE impact damage.
+
+Downsides: Low rate of fire; low engine thrust.
+
+Colour: Blue / dark blue / dark cyan
+Aesthetic: Rounded, glassy, glass
+Shields: Passive at Level I, Armour at Level II
+Weapons: Bomb at Level I, Precision at Level III
+Engines: Impulse Drive at Level I, Particle Accelerator at Level III
+Power: Fission at Level I, Fusion at Level II
+
+An ancient aquatic race not known for doing anything particularly quickly.
+Their ships are built to endure and achieve victory via attrition rather than
+surprise attack. AOE impact damage is relatively ineffectual since it mostly
+simply counter-balances the immense liquid pressure the hull must wistand.
+
+** Cytherians
+
+Upsides: High weapon damage, high engine thrust, low materials costs (reduced
+from base; i.e., replicants still have to pay full to copy Cytherians).
+
+Downsides: Low hull strength, high heat generation.
+
+Colour: Red / yellow / white
+Aesthetic: Skeleton, hollow, barebones, bone
+Shields: Armour at Level I, Active at Level III
+Weapons: Spread at Level I, Precision at Level II
+Engines: Impulse Drive at Level I, Bussard Ramjet at Level II
+Power: Fusion at Level I, Mechanical at Level III
+
+A reptilian race of unknown origin which was first discovered after having
+established a base on the surface of Venus, which set into motion the events
+that eventually led to Earth's unification. They generally value cheap
+construction and high destructive power over safety.
+
+* Physics Considerations
+
+If we want to build hexeline on top of libpraefectus, we need to be able to
+efficiently rewind / fast-forward time.
+
+** Brute Force
+
+Just take snapshots. When we rewind, we just go back to the appropriate
+snapshot and then move the whole world forward.
+
+In a networked game, rewinds will be frequent, since remote player actions come
+in some time after they actually happened. This means that time spent
+fast-forwarding will dominate.
+
+Assume we need to rewind 50 times per second, and on average we go back 200ms.
+To render the next frame, we need to fast-forward those 200ms each time, so
+every second we do 50*200ms = 10s of simulation time. In other words, the game
+engine has to be able to consistently run the simulation at 10x speed.
+
+Assuming we want a simulated time slice of 10ms (100fps), this means we
+effectively need to be able to do that simulation in 1ms (1000fps). If we want
+to handle 10000 physical objects, this gives us an average budget of 100ns per
+object per update, around 300 clock cycles. This includes collision detection.
+
+The brute force solution is thus fairly simple mathematically/physically but
+requires a lot of low-level optimisation, which may be fun.
+
+*** Eliding Updates
+
+Many objects move in an extremely simple path, such that given state T1,
+determining the state TN is the same cost as determining T2, provided there are
+no interactions with other objects. This means we don't need to actually
+persist these trivial updates, reducing memory write bandwidth.
+
+If we set a finite "speed of light" (but not speed of causality, see [[Special
+Relativity]]), the collision detection pass can determine the absolute minimum
+time before a passive object could undergo potential collision. If we save this
+timestamp with the object state, we can entirely elide updating the object or
+checking for collision during fast-forward phases.
+
+*** Collision Detection
+
+Collision detection was Abendstern's main drain on CPU time. Since we plan on
+having ship-ship collisions as well as a lot more objects in space, optimising
+collision detection is even more important.
+
+Abendstern simply kept the set of objects in an array sorted by X coordinate,
+using gnome sort after each update to maintain the order. This optimises away a
+lot of collision comparisons, but things far away that happened to overlap on
+the X axis still had to be compared. It would be nice to improve this without
+doing something memory-intensive. This sorting (or other algorithm) can use the
+old position of update-elided objects since collision is known to be impossible
+while updates are being elided anyway.
+
+Abendstern awkwardly used a tesselated strictly-convex quadrilaterals to define
+precise collision bounds. Since Hexeline cells are hexagons, which can be
+adequately approximated as circles, we will use circles here as the precise
+collision boundary type.
+
+When comparing objects for potential collision, Abendstern used a memoised
+lazily-calculated bounding box hierarchy. This works, but we can likely come up
+with something better since all objects are either a single circle or consist
+of a tesselation of regular hexagons. Particularly, this yields the property
+that the collision points of any object only have 6 distinct orderings on each
+axis for all possible rotations (3 if mirroring is discounted). Since each
+object can be represented as a grid, it may also be possible to use pre-sorted
+arrays and/or bitmasking as a first pass to find potential collisions.
+
+** Special Relativity
+
+Define a maximum speed of causality, so that rewinds only affect a portion of
+the objects in existence. Assuming we can make a 200ms rewind only affect 10%
+the play area, this means (using the same numbers as from [[Brute Force]]) we pay 1
+second of rewind simulation time per second, so simulation cost is only 2x of
+no rewinding (because you still pay real-time simulation since 90% of the world
+moves in real-time).
+
+Most of the weird properties of special relativity go away if velocity is made
+absolute; i.e., when moving at 0.5c, light appears to move at 0.5c in one
+direction and 1.5c in the other.
+
+The big issue with finite speed of causality is that rigid objects cannot
+exist. Ships, asteroids, etc, need to be modeled as particle clouds which
+communicate effects via delayed interaction.
+
+Inter-particle interaction is also complex and essentially requires creation of
+a sort of "virtual particle" to mediate interactions at a distance (and all
+interactions are "at a distance" since all particles are just points).
+
+So this approach is very complicated mathematically and physically, and only
+has a 5x speed improvement over brute force but has at least 10x the number of
+particles as brute force. So it's almost certainly not worth it.
+
+* Networking
+
+Event-based replication is clearly the way to go. State-based replication
+requires inaccurate dead reckoning, more bandwidth for a system with
+fine-grained destruction, increased latency due to the need to batch updates,
+and a less accurate simulation due to this latency.
+
+The main question is whether we should use centralised or peer-to-peer
+networking.
+
+** Peer-to-Peer
+
+Peer-to-peer has the advantage that it requires no centralised support other
+than discovery, making it cheaper to support. However, it adds a lot of
+complexities for event-based replication since there is no source of truth. It
+also requires a lot more bandwidth for each peer, and introduces a lot more
+network edges which could behave poorly.
+
+This would probably involve using libpraefectus, which also has an awkward API
+in exchange for not needing to reimplement all the other aspects.
+
+** Centralised
+
+Clients talk only to a central server, which validates and forwards events to
+other clients and acts as a trusted source of truth.
+
+This has a lot of advantages over peer-to-peer. Particularly, it does not need
+external hosts to talk directly to the local host, which means that firewalls
+won't be a problem. It's also possible to fall back on HTTP tunnelling. Game
+logic is simpler, because external events won't be rejected after the local
+host receives them (though the server could still reject the local host's own
+events), and we can set an absolute upper bound after which the event set is
+frozen, which simplifies memory management.
+
+On the other hand, it is more expensive to maintain since the server is
+required for the game to function at all. However, a single server should be
+able to handle a large number of games since it does not need to actually carry
+the simulation out. It also increases latency since events must go through an
+extra system first, but this could be mitigated for a serious deployment by
+having clients talk to servers nearer them.
+
+Centralised is probably the way to go though due to how much it simplifies
+things.
+
+* AI
+
+AI is needed for both enemies in single-player modes (where it can be
+simplistic and weak) and as bots in symmetric multiplayer modes (where it needs
+to be stronger).
+
+** Piloting
+
+The existence of ship-ship collision and other obstacles in space makes
+piloting substantially more complicated than in Abendstern. AI will need to
+calculate and follow paths, rather than blindly pointing in the general
+direction of their target.
+
+A few things are easier than in Abendstern, since all engines and weapons are
+constrained to point straight.
+
+*** Minimax?
+
+If we divide time into fixed slices, and constrain the AI to only taking one
+"action" per slice, we can do a d-ply minimax (or possibly beam) search over
+simulated combat. Branching factor is fairly low due to the limited set of
+actions:
+
+- Change forward throttle (2 branches for 3 states: off, on, overdrive)
+- Change brake (1 branch for 2 states: off, on)
+- Change rotation rate (4 branches for 5 states: ccw+, ccw, none, cw, cw+)
+- Reload weapon (1 branch, often prunable)
+- Toggle fire weapons / fire single (1 branch, sometimes prunable)
+- Change weapon (variable, but small number of branches)
+
+So branching factor is around 12.
+
+The main limitation is the depth of the search tree. For 100ms slices, we'd
+need 100-ply to plan ahead 5 seconds (since the adversary gets their own
+turns), which has an intractable number of states for simple minimax (on the
+order of 10**108). Even if we could reliably prune decisions to 2 branches,
+2**100 is still intractable.
+
+Beam search may make this workable since we need a heuristic scoring system
+anyway.
+
+** Ship Construction
+
+For arcadey modes, the AI don't need to be able to upgrade their ships at all,
+instead using fixed starting sets. An exception is for the replicants, which
+can simply use a set of fixed progressions.
+
+For symmetric multiplayer bots, we do need some way for them to create novel
+ship expansions using what resources are available to them.
+
+*** Tree search?
+
+Since possible ship upgrades are a finite space, it would be possible to do a
+minimax-style search over them (though not actual minimal since it wouldn't
+consider possible upgrades to the adversaries), using simulated combat with
+recent adversaries as a scoring system.
+
+Given our target of 1000 fps for 10000 objects, the simulated combat with a
+dozen or so active objects should be extremely cheap.
+* Theme/Setting
+
+Unlike Abendstern, Hexeline should have a non-serious theme, and not have any
+substantial references to real-world nations or political structures.
+
+Near the end of the industrial revolution, astronomers on Earth discovered
+evidence of alien activity on Venus. Due to the initial belief that this was
+their home world, these aliens became known as Cytherians. This discovery
+spurred an extremely early space race. The Cytherians are in fact from the
+Sirius system; in modern times, their home world is colloquially called
+"Cytheria" since most do not know the connection of the name to Venus.
+
+Shortly thereafter, it was also discovered that another alien race dwelt in the
+deepest parts of the ocean, having observed mankind since time immemorial and
+apparently being responsible for legends of mermaids, Atlantis, and other
+legends. These were named the Marians.
+
+These factors caused the nations of Earth to group into a small number of
+conglomerates, which then vied for control of Earth and the surrounding Sol
+system. One of these factions created a mechanical, self-replicating army,
+which was eventually mostly defeated along with that faction. However, stray
+Replicants remain here and there.
+
+A few smaller groups united in opposition to the apparent victor of Earth
+unification, initially fighting a hopeless rebellion until they were driven out
+of the Sol system into the Alpha Centauri system. Over time, their rebellion
+devolved into unorganised piracy.
+
+These five factions now vie for control of a region of space that has come to
+be known as Eden; a region of a nebula very rich in resources and populated
+with unique varieties of organisms which live in the thin atmosphere-like area.
+
+* Environment
+
+** Topology
+
+Space is not a fully-accessible 2D plane as in Abendstern. Instead, empty space
+is distributed with Worley noise, thus creating "rooms" and "passages". The
+boundaries have high friction as well as a passive force to bring objects back
+toward the empty area.
+
+This makes navigating space more interesting and eliminates the "line of
+instant death" plagued Abendstern while maintaining boundaries as things you
+want to avoid interacting with.
+
+Each room has an associated colour used for the visual environment. Rooms close
+together have similar colours.
+
+** Visual Environment
+
+The visual environment corresponds to the "background" from Abendstern; i.e.,
+it mainly exists to give a sense of motion even in the absence of other objects.
+
+*** Background Layer
+
+The background is generated on the GPU per-frame by sampling 4D fractal Perlin
+noise at various depths, taking into account parallax. The vertex vectors for
+the Perlin noise are generated by a hash function on the GPU using a
+CPU-provided seed, the time, and coordinates as inputs. Elements near the
+viewport have a colour corresponding to the current room colour (or an
+interpolation provided by the CPU); near elements fade into a uniform colour
+used for the whole level.
+
+The background layer has lower luminance than other visual layers so that
+boundaries indicated by the inline layer are clear.
+
+*** Inline Layer
+
+The inline layer exists on the same plane as the game objects. We can probably
+pull the nebula code out of Abendstern (sans GPU-to-CPU physics) and modulate
+it by the "density" of the nebula to indicate physical boundaries.
+
+*** Overlay Layer
+
+The overlay layer is essentially an extension of the background layer to be in
+front of the plane of objects, but has arteficially reduced density so the
+player can still see everything.
+
+*** Rendering
+
+All three layers can be rendered in two passes. The first would perform the
+background and inline layers, and the second the overlay layer. The overlay
+layer needs to be done separately (instead of using Z-buffering to selectively
+overwrite or preserve existing pixels) in order for alpha blending to work
+correctly.
+
+The point density at the inline layer would be communicated by the CPU
+determining points where the boundary pressure reaches maximum and minimum and
+tessellating those points, allowing the inline pressure to be a simple
+interpolated vertex variable.
+
+The feedback buffer used by Abendstern's nebula system could still be
+difficult, due to the space it requires and the fact that it cannot gracefully
+handle the camera being suddenly moved to a different part of space.
