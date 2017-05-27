@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Jason Lingle <jason@lin.gl>"]
 
 [dependencies]
-sdl2 = "0.16.1"
+sdl2 = "0.30.0"
 gl = "0.6.2"
 cgmath = "0.14.1"
+simd = "0.2.0"

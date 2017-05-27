@@ -13,11 +13,15 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+#![allow(dead_code)]
+
 extern crate sdl2;
 extern crate gl;
 extern crate cgmath as cg;
+extern crate simd;
 
 mod graphic;
+mod physics;
 
 use std::io;
 use std::io::Write;

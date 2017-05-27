@@ -1,0 +1,252 @@
+See the "Physics Considerations" section of [[../../DESIGN-II.org]] for background
+on some of the high-level decisions here. Here, we focus on lower-level things.
+
+* Performance Numbers
+
+Goals set forth in the high-level design:
+
+- 10ms update cycle takes at most 1ms
+- Handle up to 10'000 independent objects
+
+Target minimum hardware:
+
+- 2GHz processor (with comparable instruction/cycle rate of the Broadwell era)
+- 1GB/sec memory write bandwidth (no cache)
+- 32kB L1 cache
+- 256kB L2 cache
+- 2MB L3 cache
+- Assume
+  https://mechanical-sympathy.blogspot.ca/2013/02/cpu-cache-flushing-fallacy.html
+  is representative for memory access latencies:
+  - 3 cycles for L1 hit (~1ns)
+  - 12 cycles for L2 hit (~6ns)
+  - 38 cycles for L3 hit (~19ns)
+  - 130 cycles for hitting RAM (~65ns)
+
+10'000 objects in 1ms means 10'000'000 object updates per second, or 100ns per
+object update. At the minimum required processor speed, this means we get 200
+clock cycles average per object update. Note that this means that a DRAM hit is
+over half our budget for average update time. This means we need to ensure the
+majority of object data can fit inside the L3 cache and doesn't conflict with
+itself.
+
+* High-level design
+
+All coordinates are expressed as integers rather than floats, which gives space
+a uniform quantisation and ensures reproduciblity.
+
+Spatial coordinates are signed 32-bit integers. A screen-width at default zoom
+is 65536 units across. Negative absolute coordinates are not normally used;
+signedness is used for expressing relative coordinates. Coordinates follow 2D
+drawing conventions: +X is right, +Y is down.
+
+Velocity is simply a pair of signed integers indicating delta position per
+tick. This quantises velocity to 100 units/sec, or about one pixel per 3
+seconds on a 1920-wide monitor. We only need 16 bits for each velocity
+component, since 50 screens/sec (v=32768) is far higher than any speed of light
+we'd care to set anyway.
+
+Rotation is expressed as a signed 16-bit integer, with 0 being 0 radians and
+-32768 being -pi radians. Wrapping arithmetic means that angles are always
+conveniently normalised to (pi,-pi] radians (which was a big pain to do in
+Abendstern). Since the coordinate system is left-handed, positive angle is
+clockwise.
+
+Rotational velocity cannot be expressed simply as delta rotation per tick, as
+this would yield a velocity quantisation of 100 units per second, or about 0.5
+degrees/second. Instead, it is counted in fourths of a unit per tick, with
+fractional values handled by rounding up or down on different frames. We only
+need 16 bits for rotational velocity, as this gives a maximum rotational
+velocity of 8192 units/tick = 819200 units/sec = 12 full rotations/sec.
+
+One obvious thing about objects in space is that a few behaviours are common to
+everything, and many objects have _only_ these behaviours in the absence of
+interactions with other objects:
+
+- Position
+- Rotation
+- Velocity
+- Rotational velocity
+- Size (radius of bounding circle)
+- Friction
+
+If we split objects into these common properties plus extended properties, the
+common properties can be stored uniformly and contiguously. The common
+properties would then have a pointer of sorts to the extended data.
+
+To minimise accesses to the extended data, we can also have a concept of an
+object "sleeping", expressed as a number of ticks until it either needs to do
+something that modifies its extended state or interacts with the static
+environment.
+
+To quicken collision detection, we use the same system Abendstern did, wherein
+we keep the objects (in this case, just the common properties) sorted ascending
+by the rightmost X coordinate of their bounding circle.
+
+* Common Data Layout
+
+Goal: Cram all the common data into 2 128-bit SSE registers.
+
+Something like the below (note that the real thing is slightly different):
+
+xmm0[  0.. 31] i32 X coordinate + rounded-radius
+xmm0[ 32.. 63] i32 Y coordinate
+xmm0[ 64.. 79] i16 Theta
+xmm0[ 80.. 95] u8 Rounded-radius / 256
+xmm0[ 96..103] u8 Collision group
+xmm0[104..111] u8 Object type
+xmm0[112..128] u16 Extended data pointer (if applicable)
+xmm1[  0.. 15] i16 X velocity
+xmm1[ 16.. 23] u8 X friction
+xmm1[ 24.. 31] i8 X acceleration
+xmm1[ 32.. 47] i16 Y velocity
+xmm1[ 48.. 55] u8 Y friction
+xmm1[ 56.. 63] i8 Y acceleration
+xmm1[ 64.. 79] i16 Theta velocity * 4
+xmm1[ 80.. 87] u8 Theta friction
+xmm1[ 88.. 95] i8 Theta acceleration
+xmm1[ 96.. 103] u8 Ticks until wake-up
+xmm1[ 104..127] ???
+
+Using 16-bit velocity gives us enough space to also include passive
+acceleration (as signed bytes), which allows encoding relatively complex
+movements without wakeup and only using processor registers.
+
+Note that velocities are laid out parallel to the coordinates so they can be
+added to the position without extracting them first (after bitmasking the other
+data away).
+
+The way the X coordinate is stored means that sorting values by treating xmm0
+as an i32x4 is sufficient to achieve the correct ordering.
+
+Data is also laid out such that collision detection only cares about xmm0 while
+sweeping.
+
+"Rounded radius" is the physical radius of the object (relative to the nominal
+X coordinate) rounded up to the next multiple of 256.
+
+Not all object types need extended data; those which don't can store extra
+information in the extended data pointer field.
+
+Since each object has 32 bytes of common data, the common data array for 10'000
+objects takes 320'000 bytes, which is unfortunately larger than our L2 cache,
+but fits with much room to spare in the L3 cache. Since the CPU can flush
+writes to lower levels asynchronously provided we don't outrun that process
+(which we won't), we only need to care about the L3 cost of reads. A passive
+object thus burns half a cache line per update, so we lose around 10ns to
+memory latency per passive update. If the SSE prefetch instruction is
+available, we can prefetch upcoming objects to L1 cache, eliminating this
+price.
+
+* Snapshotting and Data Placement
+
+We need to periodically take a snapshot of the state of the world so that we
+can roll back to it if a new event comes in after the time it is supposed to
+apply.
+
+There's two ways to approach this:
+
+- When a snapshot is taken, allocate new space for the data and copy all state
+  into it. Updating the world simply overwrites data in-place.
+
+- Take a write-once (per frame) approach to updating. Snapshots simply retain a
+  reference to the root of state at that frame; updates allocate new space and
+  write data there.
+
+The first approach seems simpler, and given that we're cramming everything into
+at most a few megabytes of state, a few snapshots per second would be fairly
+cheap. However, this approach also has some unexpected downsides:
+
+- Creation and destruction of objects need to create or remove holes in the
+  sorted array. This means on average half of the common state would be
+  rewritten anyway.
+
+- Objects which change state in response to other objects see an intermediate
+  state of the world, so a canonical order of updating objects must be defined.
+
+- Rendering and updating cannot happen simultaneously since rendering needs the
+  state of the world to be steady (though not necessarily consistent).
+
+Therefore we actually use the second approach. Each frame, the common data is
+completely rewritten. Objects which are created or destroyed as part of the
+update process do so when they are/should be very near the end of the array.
+Objects that observe other objects instead see a consistent state of the world
+of the _previous_ frame. Rendering can be asynchronous wrt updating.
+
+Since we have a no-overwrite policy, objects which change their extended data
+must allocate new space, write their state there, then update the extended data
+pointer. To make this efficient, and to reduce pointer size to 16 bits, this
+happens within a 1MB heap with 16-byte allocation granularity. Allocation
+simply increments the free pointer as needed. It is trivial to tell whether an
+allocation is new for this frame by comparing the allocation address with what
+the free pointer was at the beginning of the frame. When the heap gets too
+full, we make a new one and garbage collect by copying all live objects over.
+
+In this system, making snapshots is essentially free. We still don't want to
+do snapshots every frame or something though, since each snapshot retains a
+unique common data array, which is 320kB in the worst case.
+
+* Collision Detection
+
+Since we don't want to pay extra memory/cache bandwidth that would be needed by
+the traditional two-pass update-then-collide system, we instead perform
+collision detection inline with updating. After the general updating of an
+object, we "slide" it into place in the common data array, then scan backwards
+for objects whose X bounding box (X-2*radius..X) overlaps with the object in
+question. Since we keep the array sorted by the upper X bound, we only need to
+look at a handful of objects here.
+
+The system has two types of physical objects: point particles, with radius = 0,
+and composites, which have their bounds defined by whether tiles on a regular
+hexagonal grid are populated. All composites have hexagons of the same size.
+Point particles cannot collide with other point particles, so when scanning for
+collidees for a point particle, we skip other point particles.
+
+Objects with the same non-zero collision group are skipped. This is not so much
+an optimisation as it is a mechanism to prevent projectiles fired by a player
+from immediately colliding with their ship.
+
+Objects overlapping on the X axis are then checked whether their Y axis bounds
+overlap; those that do not are skipped.
+
+At this point, we need to do precise collision detection. There's two cases:
+
+- Point particle and composite. We convert the point particle's position into
+  hexagonal coordinates relative to the composite, then directly check what (if
+  anything) is in that position of the composite's grid.
+
+- Two composites. We assume that two composites will only touch at exactly one
+  point; this can only false if two composites are at just the right rotation.
+  We iterate over the cells of the smaller composite and project each to the
+  grid of the larger one. If we find a pair of overlapping cells, we consider
+  it a collision, and proceed with the pair with the closest coordinates.
+
+For both cases, we need to consider the case where the relative speed of the
+two objects is greater than half a cell width per frame; the naïve approach
+opens the door for missing collisions entirely or detecting them on the wrong
+side of an object.
+
+To deal with this, we assume that the velocities saved in the object are
+representative of the amount it moved this frame, though this is not
+necessarily correct. We expand the "size" of cells for collision detection
+purposes according to the relative velocities of the two objects (including
+taking rotation into account). If the test on the present state of the objects
+indicates a fuzzy collision, we binary search for the first instant where the
+two objects were fuzzy-colliding, then binary search forward for the first
+instant where the two objects are precisely colliding. If such an instant is
+found, we use that state to calculate the collision dynamics. In the case of
+composite-composite collisions, we also shunt both objects back to the instant
+right before the collision so they are not left in an overlapping state.
+
+To support composites which need to add new cells dynamically, there is also a
+"virtual cell" concept. A virtual cell exists for only one frame; if it
+collides with something, the virtual cell is notified (so it can be removed the
+next frame) but no other collision dynamics occur. After that one frame of
+existence, a real cell can be placed there, as any new collision is
+functionally equivalent to what would have happened if the cell already existed
+there for some time.
+
+Unlike in Abendstern, objects are not allowed to change their properties
+related to collision detection (including being destroyed or creating new
+objects) in response to colliding with something. Instead, they must store this
+state and apply this effect in the next frame.
