@@ -226,17 +226,29 @@ two objects is greater than half a cell width per frame; the naïve approach
 opens the door for missing collisions entirely or detecting them on the wrong
 side of an object.
 
-To deal with this, we assume that the velocities saved in the object are
-representative of the amount it moved this frame, though this is not
-necessarily correct. We expand the "size" of cells for collision detection
-purposes according to the relative velocities of the two objects (including
-taking rotation into account). If the test on the present state of the objects
-indicates a fuzzy collision, we binary search for the first instant where the
-two objects were fuzzy-colliding, then binary search forward for the first
-instant where the two objects are precisely colliding. If such an instant is
-found, we use that state to calculate the collision dynamics. In the case of
-composite-composite collisions, we also shunt both objects back to the instant
-right before the collision so they are not left in an overlapping state.
+We deal with this by instead treating each point of the smaller object as a
+line segment, obtained by assuming all velocities (including rotation) are
+exactly representative for how each object moved this frame to determine the
+relative positions of the points in question at the start and end of the frame
+and assuming the points moved in a straight line between those positions.
+Determining the point of collision (if any) then requires simply evaluating the
+resulting linear equation a few times. Note that the larger object is always a
+composite, so we can still rapidly determine the candidate collision points by
+tracing the line segment across the hex grid.
+
+Another problem is that we only detect collisions after objects are
+overlapping. Some systems deal with this by shunting the object(s) so this is
+not the case. However, repositioning the objects requires re-sorting the object
+array, and can cause overlap with other objects. The problems this causes can
+be seen in games like Skyrim, particularly when objects are stacked.
+
+Instead, we simply allow the objects to continue overlapping, and additionally
+define a collision to not happen if the dot product between the relative
+positions of the points in question is not positive at the time of presumed
+impact. Since objects undergoing collision have their velocities updated to
+move away from each other (at least at those points), the next frame will then
+not consider the overlapping objects to be colliding and they will drift apart
+naturally.
 
 To support composites which need to add new cells dynamically, there is also a
 "virtual cell" concept. A virtual cell exists for only one frame; if it

@@ -44,7 +44,7 @@ pub struct CommonObject {
     /// Field 3:
     ///   - [ 0.. 7] object_type
     ///   - [ 8..23] extended_data
-    ///   - [24..31] ???
+    ///   - [24..31] data_dst_size
     ///
     /// Theta is placed at the top of that field so that values can be added to
     /// it without corrupting other data when it wraps around.
@@ -64,14 +64,22 @@ pub struct CommonObject {
     ///   - [ 8..15] atheta
     ///   - [16..31] vtheta_x4
     /// Field 3:
-    ///   - [ 0..23] ???
-    ///   - [24..31] wakeup_counter
+    ///   - [ 0.. 7] id_lo
+    ///   - [ 8..15] counter_increment
+    ///   - [16..23] wakeup_counter
+    ///   - [24..31] id_hi
     ///
     /// X and Y velocity are aligned so that they can be bit-shifted 16 bits
     /// right and then added to the `a` field. All velocities are in the high
     /// half so that the whole `b` field can be bit-shifted around to
     /// sign-extend acceleration and then added to itself to update the
     /// velocity.
+    ///
+    /// `counter_increment` and `wakeup_counter` are placed so the counter can
+    /// be updated in the same step that updates velocity with acceleration.
+    /// Note that this means that the `id` field is awkwardly split in two, and
+    /// that `id_hi` gets corrupted when `wakeup_counter` wraps around, which
+    /// must be fixed manually.
     pub b: i32x4,
 }
 
@@ -99,6 +107,10 @@ pub struct UnpackedCommonObject {
     /// compressed pointer into the extended data heap. Otherwise, some
     /// type-specific data.
     pub extended_data: u16,
+    /// If `extended_data` is a pointer to a DST, a type-specific
+    /// representation of the length part of the DST pointer. Otherwise, extra
+    /// type-specific data.
+    pub data_dst_size: u8,
     /// The X velocity.
     pub vx: i16,
     /// The X friction, i.e., what fraction of X velocity is preserved every
@@ -123,6 +135,14 @@ pub struct UnpackedCommonObject {
     /// or interact with the static environment. Note that this counts _up_ to
     /// 0 (by wrapping around from 255).
     pub wakeup_counter: u8,
+    /// Amount by which `wakeup_counter` is incremented each frame. Currently,
+    /// this should always be 1.
+    pub wakeup_increment: u8,
+    /// The unique id of this object. This is used by graphics and other
+    /// processes to track individual objects. A value of 0 indicates an
+    /// unidentifiable object. Unidentifiable objects may still have graphics;
+    /// they simply cannot have graphical state.
+    pub id: u16,
 }
 
 macro_rules! common_field {
@@ -174,6 +194,8 @@ impl CommonObject {
                   with_object_type);
     common_field!(a:3[ 8..23]: u16 extended_data, set_extended_data,
                   with_extended_data);
+    common_field!(a:3[24..31]: u8 data_dst_size, set_data_dst_size,
+                  with_data_dst_size);
 
     common_field!(b:0[ 0.. 7]:  u8 fx, set_fx, with_fx);
     common_field!(b:0[ 8..15]:  i8 ax, set_ax, with_ax);
@@ -184,8 +206,12 @@ impl CommonObject {
     common_field!(b:2[ 0.. 7]:  u8 ftheta, set_ftheta, with_ftheta);
     common_field!(b:2[ 8..15]:  i8 atheta, set_atheta, with_atheta);
     common_field!(b:2[16..31]: i16 vtheta_x4, set_vtheta_x4, with_vtheta_x4);
-    common_field!(b:3[24..31]:  u8 wakeup_counter, set_wakeup_counter,
+    common_field!(b:3[ 0.. 7]:  u8 id_lo, set_id_lo, with_id_lo);
+    common_field!(b:3[ 8..15]:  u8 wakeup_increment, set_wakeup_increment,
+                  with_wakeup_increment);
+    common_field!(b:3[16..23]:  u8 wakeup_counter, set_wakeup_counter,
                   with_wakeup_counter);
+    common_field!(b:3[24..31]:  u8 id_hi, set_id_hi, with_id_hi);
 
     pub fn unpack(self) -> UnpackedCommonObject {
         UnpackedCommonObject {
@@ -196,6 +222,7 @@ impl CommonObject {
             theta: self.theta(),
             object_type: self.object_type(),
             extended_data: self.extended_data(),
+            data_dst_size: self.data_dst_size(),
             fx: self.fx(),
             ax: self.ax(),
             vx: self.vx(),
@@ -206,6 +233,8 @@ impl CommonObject {
             atheta: self.atheta(),
             ftheta: self.ftheta(),
             wakeup_counter: self.wakeup_counter(),
+            wakeup_increment: self.wakeup_increment(),
+            id: (self.id_lo() as u16) | ((self.id_hi() as u16) << 8),
         }
     }
 }
@@ -224,6 +253,7 @@ impl UnpackedCommonObject {
             .with_theta(self.theta)
             .with_object_type(self.object_type)
             .with_extended_data(self.extended_data)
+            .with_data_dst_size(self.data_dst_size)
             .with_fx(self.fx)
             .with_ax(self.ax)
             .with_vx(self.vx)
@@ -234,6 +264,9 @@ impl UnpackedCommonObject {
             .with_atheta(self.atheta)
             .with_vtheta_x4(self.vtheta_x4)
             .with_wakeup_counter(self.wakeup_counter)
+            .with_wakeup_increment(self.wakeup_increment)
+            .with_id_lo(self.id as u8)
+            .with_id_hi((self.id >> 8) as u8)
     }
 }
 
@@ -257,6 +290,7 @@ mod test {
         const U16_BOUNDARIES: &[u16] = &[0, u16::MAX];
         const I8_BOUNDARIES:  &[i8 ] = &[0, i8::MIN, i8::MAX];
         const U8_BOUNDARIES:  &[u8 ] = &[0, u8::MAX];
+        const ID_BOUNDARIES:  &[u16] = &[0, 128, 255, 256, u16::MAX];
 
         // Brute-force test of all boundary values
         for &biased_x in I32_BOUNDARIES {
@@ -266,6 +300,7 @@ mod test {
         for &collision_group in U8_BOUNDARIES {
         for &object_type in U8_BOUNDARIES {
         for &extended_data in U16_BOUNDARIES {
+        for &data_dst_size in U8_BOUNDARIES {
         for &vx in I16_BOUNDARIES {
         for &fx in U8_BOUNDARIES {
         for &ax in I8_BOUNDARIES {
@@ -276,15 +311,18 @@ mod test {
         for &ftheta in U8_BOUNDARIES {
         for &atheta in I8_BOUNDARIES {
         for &wakeup_counter in U8_BOUNDARIES {
+        for &wakeup_increment in U8_BOUNDARIES {
+        for &id in ID_BOUNDARIES {
             let orig = UnpackedCommonObject {
                 biased_x, y, theta, rounded_radius,
                 collision_group, object_type, extended_data,
+                data_dst_size,
                 vx, fx, ax, vy, fy, ay, vtheta_x4, ftheta, atheta,
-                wakeup_counter
+                wakeup_counter, wakeup_increment, id,
             };
             let packed = orig.pack();
             let unpacked = packed.unpack();
             assert_eq!(orig, unpacked);
-        }}}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}}}}}
     }
 }
