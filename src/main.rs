@@ -1,5 +1,5 @@
 //-
-// Copyright (c) 2016, Jason Lingle
+// Copyright (c) 2016, 2017, Jason Lingle
 //
 // Permission to  use, copy,  modify, and/or distribute  this software  for any
 // purpose  with or  without fee  is hereby  granted, provided  that the  above
@@ -13,12 +13,15 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+#![feature(test)]
 #![allow(dead_code)]
 
-extern crate sdl2;
-extern crate gl;
 extern crate cgmath as cg;
+extern crate gl;
+extern crate png;
+extern crate sdl2;
 extern crate simd;
+extern crate test;
 
 mod graphic;
 mod physics;
@@ -28,6 +31,8 @@ use std::io::Write;
 use gl::types::*;
 
 fn main() {
+    test_hexgrid();
+
     fn die<T>(message: String) -> T {
         writeln!(&mut io::stderr(), "Failed to initialise SDL: {}", message)
             .unwrap();
@@ -133,4 +138,48 @@ fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders) {
     unsafe {
         gl::DrawArrays(gl::TRIANGLES, 0, 3);
     }
+}
+
+fn test_hexgrid() {
+    use std::fs;
+    use std::io;
+
+    use simd::*;
+    use png::HasParameters;
+
+    const W: usize = 2048;
+    const H: usize = 2048;
+    const SCALE: usize = 65536/1280/4;
+
+    let mut data = vec![0u8;W*H*3];
+    for y in 0..H {
+        for x in 0..W {
+            let cart = i32x4::new(
+                (x * SCALE) as i32,
+                (y * SCALE) as i32,
+                0, 0);
+            let hexa = physics::hexgrid::cartesian_to_hexagonal(cart);
+            let hex = physics::hexgrid::hexagonal_to_index(hexa);
+
+            let mut rg = (hex.1 * 16) as u8;
+            let mut b = (hex.0 * 16) as u8;
+
+            if (hexa.extract(0) & physics::hexgrid::CELL_COORD_MASK) <= 32 {
+                rg ^= 255;
+            }
+            if (hexa.extract(1) & physics::hexgrid::CELL_COORD_MASK) <= 32 {
+                b ^= 255;
+            }
+
+            data[y*W*3 + x*3 + 0] = rg;
+            data[y*W*3 + x*3 + 1] = rg;
+            data[y*W*3 + x*3 + 2] = b;
+        }
+    }
+
+    let out = io::BufWriter::new(fs::File::create("hexes.png").unwrap());
+    let mut encoder = png::Encoder::new(out, W as u32, H as u32);
+    encoder.set(png::ColorType::RGB).set(png::BitDepth::Eight);
+
+    encoder.write_header().unwrap().write_image_data(&data).unwrap();
 }

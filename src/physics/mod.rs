@@ -17,3 +17,4 @@ mod units;
 pub use self::units::*;
 mod common_object;
 pub use self::common_object::*;
+pub mod hexgrid;
