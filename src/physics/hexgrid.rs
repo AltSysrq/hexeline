@@ -290,27 +290,28 @@ pub fn hexagonal_to_cartesian(hexa: i32x4) -> i32x4 {
     x = k*a - k/2*b - k/2*c
     y = k*sqrt(3)/2 * b - k*sqrt(3)/2 * c
 
-    x = sqrt(2)/sqrt(3)*a - sqrt(2)/sqrt(3)*b - sqrt(2)/sqrt(3)*b
+    x = sqrt(2)/sqrt(3)*a - sqrt(2)/sqrt(3)/2*b - sqrt(2)/sqrt(3)/2*b
     y = sqrt(2)/2*b - sqrt(2)/2*c
 
-    | x |   | sqrt(2)/sqrt(3)   -sqrt(2)/sqrt(3)        -sqrt(2)/sqrt(3) | | a |
-    | y | = | 0                 sqrt(2)/2               -sqrt(2)/2       | | b |
-    | _ |   | 0                 0                       0                | | c |
+    | x |   | sqrt(2)/sqrt(3)   -sqrt(2)/sqrt(3)/2  -sqrt(2)/sqrt(3)/2 | | a |
+    | y | = | 0                 sqrt(2)/2           -sqrt(2)/2         | | b |
+    | _ |   | 0                 0                   0                  | | c |
     */
     // Make a vector of (b,b,a,a) so we can do the first two columns at the
     // same time.
     let bbaa = i32x4::new(hexa.extract(1), hexa.extract(1),
                           hexa.extract(0), hexa.extract(0));
-    // Compute the first two columns at the same time. The second row of the
-    // first column (3 component) is simply set to the negative of the first
-    // row, which we use to cancel it out later.
-    let col21: i32x4 = (bbaa * i32x4::new(-6689, 5793, 6689, -6689)) >> 13;
+    // Compute the first two columns at the same time. The second column is
+    // negated so it can be cancelled out later.
+    let col21: i32x4 = bbaa * i32x4::new(-3344, 5793, -6689, 0);
     let c = i32x4::splat(hexa.extract(2));
-    let col3 = (c * i32x4::new(-6689, 5793, 0, 0)) >> 13;
+    let col3 = c * i32x4::new(-3344, -5793, 0, 0);
 
-    col21 + col3 + i32x4::new(col21.extract(2), col21.extract(3),
-                              // Cancel out remnants of the 2nd half of col21
-                              col21.extract(3), col21.extract(2))
+    let combined = col3 + col21 - i32x4::new(
+        col21.extract(2), col21.extract(3),
+        col21.extract(2), col21.extract(3));
+
+    combined >> 13
 }
 
 #[cfg(test)]

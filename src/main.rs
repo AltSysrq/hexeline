@@ -172,6 +172,14 @@ fn test_hexgrid() {
                 b ^= 255;
             }
 
+            let recart = physics::hexgrid::hexagonal_to_cartesian(hexa);
+            if recart.extract(0) / (SCALE as i32) & 255 < 16 ||
+                recart.extract(1) / (SCALE as i32) & 255 < 16
+            {
+                rg = 255;
+                b = 255;
+            }
+
             data[y*W*3 + x*3 + 0] = rg;
             data[y*W*3 + x*3 + 1] = rg;
             data[y*W*3 + x*3 + 2] = b;
