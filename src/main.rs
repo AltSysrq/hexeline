@@ -13,7 +13,7 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-#![feature(test, platform_intrinsics)]
+#![feature(test, platform_intrinsics, cfg_target_feature)]
 #![allow(dead_code)]
 
 extern crate cgmath as cg;
@@ -23,12 +23,13 @@ extern crate sdl2;
 extern crate simd;
 extern crate test;
 
-mod graphic;
-mod physics;
-
 use std::io;
 use std::io::Write;
 use gl::types::*;
+
+mod simdext;
+mod graphic;
+mod physics;
 
 fn main() {
     test_hexgrid();

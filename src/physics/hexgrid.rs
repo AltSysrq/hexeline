@@ -186,9 +186,8 @@ Substituting some stuff gives us
 as the interior of the hexagon.
 */
 
-use std::mem;
-
 use simd::*;
+use simdext::*;
 
 /// The amount to left-shift 1 by to get `CELL_RADIUS`.
 pub const CELL_RADIUS_SHIFT: u8 = 8;
@@ -248,8 +247,6 @@ pub fn hexagonal_to_index(hexa: i32x4) -> (i32, i32) {
     // i32x4::neg expands to a function call, so subtract from 0 instead.
     let c_residue = i32x4::splat(0) - a_residue - b_residue;
 
-    // TODO Support systems without SSE4.1
-    use simd::x86::sse4_1::Sse41I32x4;
     let max_residue = a_residue.max(b_residue).max(c_residue);
     let min_residue = a_residue.min(b_residue).min(c_residue);
     // We can't use .le() because it gets turned into a function call even with
@@ -260,13 +257,7 @@ pub fn hexagonal_to_index(hexa: i32x4) -> (i32, i32) {
         (max_residue - min_residue) - i32x4::splat(CELL_COORD_MASK + 2);
     // Efficiently get a 4-bit value indicating which lanes of valid_mask have
     // their sign bit set (i.e., are valid solutions).
-    // TODO Support non-SSE
-    extern "platform-intrinsic"{
-        fn x86_mm_movemask_ps(a: f32x4) -> i32;
-    }
-    let valid_bits = unsafe {
-        x86_mm_movemask_ps(mem::transmute(valid_mask))
-    } as u32;
+    let valid_bits = valid_mask.movemask();
     // Lookup-table-in-a-register
     // Map movemask values to A and B offsets.
     // We know there is always at least 1 solution, so if we bit-shift the
