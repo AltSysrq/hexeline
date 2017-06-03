@@ -186,6 +186,8 @@ Substituting some stuff gives us
 as the interior of the hexagon.
 */
 
+use std::mem;
+
 use simd::*;
 
 /// The amount to left-shift 1 by to get `CELL_RADIUS`.
@@ -235,10 +237,10 @@ pub fn hexagonal_to_index(hexa: i32x4) -> (i32, i32) {
     // Calculate our rounding options. Note that for A we round up in the last
     // two lanes, where for B we round up in the odd numbered lanes.
     let rounded_a =
-        (base_a + i32x4::new(0, 0, CELL_COORD_MASK, CELL_COORD_MASK)) &
+        (base_a + i32x4::new(0, 0, CELL_COORD_MASK+1, CELL_COORD_MASK+1)) &
         i32x4::splat(!CELL_COORD_MASK);
     let rounded_b =
-        (base_b + i32x4::new(0, CELL_COORD_MASK, 0, CELL_COORD_MASK)) &
+        (base_b + i32x4::new(0, CELL_COORD_MASK+1, 0, CELL_COORD_MASK+1)) &
         i32x4::splat(!CELL_COORD_MASK);
     // Compute the residue for all for options, as well as for C
     let a_residue = rounded_a - base_a;
@@ -252,20 +254,38 @@ pub fn hexagonal_to_index(hexa: i32x4) -> (i32, i32) {
     let min_residue = a_residue.min(b_residue).min(c_residue);
     // We can't use .le() because it gets turned into a function call even with
     // SSE4.1. We can accomplish (a <= b) with ((a - b - 1) >> 31) though
-    // (which also gets us a convenient bitmask).
-    let valid_mask = ((max_residue - min_residue) -
-                      i32x4::splat(CELL_COORD_MASK + 2)) >> 31;
-    // Fold solutions to the correct one. We can just OR multiple solutions
-    // together, since their coordinates will be at most 1 apart (and so one
-    // bit apart).
-    let aaaa = (rounded_a >> CONTINUOUS_TO_CELL_SHIFT) & valid_mask;
-    let bbbb = (rounded_b >> CONTINUOUS_TO_CELL_SHIFT) & valid_mask;
-    let aa = aaaa | i32x4::new(aaaa.extract(2), aaaa.extract(3),
-                               aaaa.extract(2), aaaa.extract(3));
-    let bb = bbbb | i32x4::new(bbbb.extract(2), bbbb.extract(3),
-                               bbbb.extract(2), bbbb.extract(3));
-    (aa.extract(0) | aa.extract(1),
-     bb.extract(0) | bb.extract(1))
+    // (which also gets us a convenient bitmask). Though here we only care
+    // about the sign bit, so the >> 31 is elided.
+    let valid_mask: i32x4 =
+        (max_residue - min_residue) - i32x4::splat(CELL_COORD_MASK + 2);
+    // Efficiently get a 4-bit value indicating which lanes of valid_mask have
+    // their sign bit set (i.e., are valid solutions).
+    // TODO Support non-SSE
+    extern "platform-intrinsic"{
+        fn x86_mm_movemask_ps(a: f32x4) -> i32;
+    }
+    let valid_bits = unsafe {
+        x86_mm_movemask_ps(mem::transmute(valid_mask))
+    } as u32;
+    // Lookup-table-in-a-register
+    // Map movemask values to A and B offsets.
+    // We know there is always at least 1 solution, so if we bit-shift the
+    // movemask output right one, we know that a value of 0 indicates that only
+    // lane 0 was set, and so we can cram each of these into 8 bits.
+    //                        7  6  5  4  3  2  1  0
+    //                     3  1  1  1  1  0  0  0  ?
+    //                     2  1  1  0  0  1  1  0  ?
+    //                     1  1  0  1  0  1  0  1  ?
+    //                     0  ?  ?  ?  ?  ?  ?  ?  1
+    //                choose  3  3  3  3  2  2  1  0
+    let valid_shuf_tab_a = 0b_1__1__1__1__1__1__0__0u16;
+    let valid_shuf_tab_b = 0b_1__1__1__1__0__0__1__0u16;
+    let shuf_ix = valid_bits >> 1;
+    let a_off = (valid_shuf_tab_a >> shuf_ix) as i32 & 1;
+    let b_off = (valid_shuf_tab_b >> shuf_ix) as i32 & 1;
+
+    let coord = hexa >> CONTINUOUS_TO_CELL_SHIFT;
+    (coord.extract(0) + a_off, coord.extract(1) + b_off)
 }
 
 /// Approximately inverts `cartesian_to_hexagonal`.

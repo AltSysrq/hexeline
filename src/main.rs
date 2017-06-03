@@ -13,7 +13,7 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-#![feature(test)]
+#![feature(test, platform_intrinsics)]
 #![allow(dead_code)]
 
 extern crate cgmath as cg;
