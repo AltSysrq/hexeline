@@ -191,7 +191,7 @@ use std::mem;
 use simd::*;
 
 /// The amount to left-shift 1 by to get `CELL_RADIUS`.
-pub const CELL_RADIUS_SHIFT: u8 = 9;
+pub const CELL_RADIUS_SHIFT: u8 = 8;
 /// The distance from the centre of a cell to any of its vertices.
 ///
 /// An outer radius of 512 means that the outer diameter is 1024, or 1/64th of

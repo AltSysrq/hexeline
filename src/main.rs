@@ -147,9 +147,9 @@ fn test_hexgrid() {
     use simd::*;
     use png::HasParameters;
 
-    const W: usize = 2048;
-    const H: usize = 2048;
-    const SCALE: usize = 65536/1280/4;
+    const W: usize = 1920;
+    const H: usize = 1080;
+    const SCALE: usize = 65536/W;
 
     let mut data = vec![0u8;W*H*3];
     for y in 0..H {
