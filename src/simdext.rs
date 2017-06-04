@@ -224,6 +224,8 @@ fn i32x4_abs(a: i32x4) -> i32x4 {
 
 #[cfg(test)]
 mod test {
+    use test::{Bencher, black_box};
+
     use simd::*;
     use super::*;
 
@@ -286,4 +288,35 @@ mod test {
         assert_eq!(3, a.dist_2Linf(b));
         assert_eq!(13, a.dist_3Linf(b));
     }
+
+    macro_rules! bench_dist {
+        ($test_name:ident, $dist_f:ident) => {
+            #[bench]
+            fn $test_name(b: &mut Bencher) {
+                b.iter(|| {
+                    let a = i32x4::new(1, 2, 3, 4);
+                    let b = i32x4::new(5, 6, 7, 8);
+                    // 10 times
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b)) +
+                    black_box(a).$dist_f(black_box(b))
+                })
+            }
+        }
+    }
+
+    bench_dist!(bench_bounding_shear_diamond, dist_2L1);
+    bench_dist!(bench_bounding_diamond, dist_3L1);
+    bench_dist!(bench_bounding_oval, dist_2L2_squared);
+    bench_dist!(bench_bounding_circle, dist_3L2_squared);
+    bench_dist!(bench_bounding_rhombus, dist_2Linf);
+    bench_dist!(bench_bounding_hexagon, dist_3Linf);
 }
