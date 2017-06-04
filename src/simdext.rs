@@ -37,6 +37,10 @@ pub trait SimdExt {
     /// Return the sum of the first three lanes.
     fn hsum_3(self) -> Self::Lane;
 
+    /// Compute self * that / 2**point without intermediate overflow or loss of
+    /// precision.
+    fn mulfp(self, that: Self, point: u32) -> Self;
+
     /// Return the 2D L1 distance between the two values.
     ///
     /// In cartesian space, this describes a diamond. In hexagonal space, it is
@@ -113,6 +117,11 @@ impl SimdExt for i32x4 {
         (Wrapping(self.extract(0)) +
          Wrapping(self.extract(1)) +
          Wrapping(self.extract(2))).0
+    }
+
+    #[inline(always)]
+    fn mulfp(self, that: i32x4, point: u32) -> i32x4 {
+        i32x4_mulfp(self, that, point)
     }
 
     #[inline]
@@ -211,19 +220,86 @@ fn i32x4_movemask(a: i32x4) -> u32 {
 }
 
 #[cfg(target_feature = "ssse3")]
+#[inline(always)]
 fn i32x4_abs(a: i32x4) -> i32x4 {
     use simd::x86::ssse3::Ssse3I32x4;
     Ssse3I32x4::abs(a)
 }
 
 #[cfg(not(target_feature = "ssse3"))]
+#[inline(always)]
 fn i32x4_abs(a: i32x4) -> i32x4 {
     bool32ix4::from_repr(a >> 31).select(
         i32x4::splat(0) - a, a)
 }
 
+#[cfg(target_feature = "sse4.1")]
+#[inline(always)]
+fn i32x4_mulfp(a: i32x4, b: i32x4, point: u32) -> i32x4 {
+    // TODO Find a way to do this that doesn't require spilling to more
+    // registers
+    use simd::x86::sse4_1::Sse41I32x4;
+    // Multiply into 64-bit values
+    let lane_02 = a.low_mul(b);
+    let lane_13 = a.shuf(1, 1, 3, 3).low_mul(b.shuf(1, 1, 3, 3));
+    // Shift the result into the less significant dword of each lane
+    let lane_02 = lane_02 >> point;
+    let lane_13 = lane_13 >> point;
+    // If there's SSE, we can safely rely on memory layout
+    let (lane_02, lane_13): (i32x4, i32x4) = unsafe {
+        (mem::transmute(lane_02), mem::transmute(lane_13))
+    };
+
+    i32x4::new(lane_02.extract(0), lane_13.extract(0),
+               lane_02.extract(2), lane_13.extract(2))
+}
+
+#[cfg(all(target_feature = "sse2", not(target_feature = "sse4.1")))]
+#[inline(always)]
+fn i32x4_mulfp(a: i32x4, b: i32x4, point: u32) -> i32x4 {
+    // Same algorithm as with SSE4.1, but we have to expand to 64-bit first,
+    // then multiply separately.
+    use simd::x86::sse2::i64x2;
+    let a_lane_02: i64x2 = unsafe { mem::transmute(a) };
+    let b_lane_02: i64x2 = unsafe { mem::transmute(b) };
+    let a_lane_13 = a_lane_02 >> 32;
+    let b_lane_13 = b_lane_02 >> 32;
+    let a_lane_02 = a_lane_02 << 32 >> 32;
+    let b_lane_02 = b_lane_02 << 32 >> 32;
+
+    let lane_02 = a_lane_02 * b_lane_02;
+    let lane_13 = a_lane_13 * b_lane_13;
+    // Shift the result into the less significant dword of each lane
+    let lane_02 = lane_02 >> point;
+    let lane_13 = lane_13 >> point;
+
+    let (lane_02, lane_13): (i32x4, i32x4) = unsafe {
+        (mem::transmute(lane_02), mem::transmute(lane_13))
+    };
+
+    i32x4::new(lane_02.extract(0), lane_13.extract(0),
+               lane_02.extract(2), lane_13.extract(2))
+}
+
+// TODO ARM arch64 has i64x2, but I don't have anything with that architecture.
+
+#[cfg(not(any(target_feature = "sse2")))]
+#[inline(always)]
+fn i32x4_mulfp(a: i32x4, b: i32x4, point: u32) -> i32x4 {
+    // No 64-bit simd available. RIP performance.
+    macro_rules! lane {
+        ($lane:expr) => {
+            (((a.extract($lane) as i64) * (b.extract($lane) as i64))
+             >> point) as i32
+        }
+    }
+
+    i32x4::new(lane!(0), lane!(1), lane!(2), lane!(3))
+}
+
 #[cfg(test)]
 mod test {
+    use std::i32;
     use test::{Bencher, black_box};
 
     use simd::*;
@@ -274,6 +350,45 @@ mod test {
         let a = i32x4::new(1, -2, 3, -4);
         assert_eq!(-1, a.hsum_2());
         assert_eq!(2, a.hsum_3());
+    }
+
+    #[test]
+    fn test_i32x4_mulfp() {
+        let mut fibs = vec![0i32, 0i32, 1i32, -1i32];
+        loop {
+            let a = fibs[fibs.len() - 4] as u64;
+            let b = fibs[fibs.len() - 2] as u64;
+            let f = a + b;
+            if f <= 1u64 << 30 {
+                fibs.push(f as i32);
+                fibs.push(-(f as i32));
+            } else {
+                break;
+            }
+        }
+        fibs.push(1 << 30);
+        fibs.push(-1 << 30);
+
+        for &lhs in &fibs {
+            for &rhs in &fibs {
+                for point in 1..31 {
+                    if rhs.abs() >> point > 2 { continue; }
+
+                    let expected = (lhs as i64) * (rhs as i64) >> point;
+                    if expected > i32::MAX as i64 ||
+                        expected < i32::MIN as i64 { continue; }
+
+                    let actual = i32x4::splat(lhs).mulfp(
+                        i32x4::splat(rhs), point);
+                    assert!(actual.extract(0) as i64 == expected,
+                            "Expected {} * {} >> {} = {}, got {}",
+                            lhs, rhs, point, expected, actual.extract(0));
+                    assert_eq!(actual.extract(0), actual.extract(1));
+                    assert_eq!(actual.extract(0), actual.extract(2));
+                    assert_eq!(actual.extract(0), actual.extract(3));
+                }
+            }
+        }
     }
 
     #[test]

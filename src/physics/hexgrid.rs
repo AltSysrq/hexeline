@@ -213,11 +213,13 @@ pub const CELL_COORD_MASK: i32 = (1 << CONTINUOUS_TO_CELL_SHIFT) - 1;
 /// 1) to hexagonal coordinates (A, B, C in 0, 1, 2). Output component 3 is
 /// always 0.
 pub fn cartesian_to_hexagonal(cart: i32x4) -> i32x4 {
+    // TODO The codegen here with SSE2 (but not SSE4.1) is quite bizarre and
+    // has 11 multiplies rather than the 4 we'd expect.
     let x = i32x4::splat(cart.extract(0));
     let y = i32x4::splat(cart.extract(1));
-    let col1 = x * i32x4::new(6689, -3344, -3344, 0);
-    let col2 = y * i32x4::new(0, 5792, -5792, 0);
-    (col1 + col2) >> 13
+    let col1 = x.mulfp(i32x4::new(6689, -3344, -3344, 0), 13);
+    let col2 = y.mulfp(i32x4::new(0, 5792, -5792, 0), 13);
+    col1 + col2
 }
 
 #[inline(never)]
@@ -302,13 +304,13 @@ pub fn hexagonal_to_cartesian(hexa: i32x4) -> i32x4 {
     let bbaa = hexa.shuf(1, 1, 0, 0);
     // Compute the first two columns at the same time. The second column is
     // negated so it can be cancelled out later.
-    let col21: i32x4 = bbaa * i32x4::new(-3344, 5793, -6689, 0);
+    let col21: i32x4 = bbaa.mulfp(i32x4::new(-3344, 5793, -6689, 0), 13);
     let c = i32x4::splat(hexa.extract(2));
-    let col3 = c * i32x4::new(-3344, -5793, 0, 0);
+    let col3 = c.mulfp(i32x4::new(-3344, -5793, 0, 0), 13);
 
     let combined = col3 + col21 - col21.shuf(2, 3, 2, 3);
 
-    combined >> 13
+    combined
 }
 
 #[cfg(test)]
@@ -382,7 +384,7 @@ mod test {
             }
         }
 
-        assert_eq!(10460115884536241436, hasher.finish());
+        assert_eq!(12911963394097092379, hasher.finish());
     }
 
     #[test]
@@ -438,6 +440,6 @@ mod test {
             }
         }
 
-        assert_eq!(16366957391786003143, hasher.finish());
+        assert_eq!(4995934429034136442, hasher.finish());
     }
 }

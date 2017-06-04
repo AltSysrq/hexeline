@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Jason Lingle <jason@lin.gl>"]
 
 [dependencies]
-cgmath = "0.14.1"
+cgmath = { version = "0.14.1", features = ["use_simd"] }
 fnv = "1.0.5"
 gl = "0.6.2"
 png = "0.7.0"
