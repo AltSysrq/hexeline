@@ -316,9 +316,24 @@ pub fn hexagonal_to_cartesian(hexa: i32x4) -> i32x4 {
 
 #[cfg(test)]
 mod test {
+    use std::hash::Hasher;
+    use test::{Bencher, black_box};
+
+    use fnv;
+    use simd::*;
+    use simdext::*;
+
     use super::*;
 
-    use test::{Bencher, black_box};
+    macro_rules! assert_approx {
+        ($fuzz:expr, $expected:expr, $actual:expr) => {{
+            let expected = $expected;
+            let actual = $actual;
+            assert!(actual >= expected - $fuzz && actual <= expected + $fuzz,
+                    "Expected {:?} +/- {:?}, got {:?}",
+                    expected, $fuzz, actual);
+        }}
+    }
 
     #[bench]
     fn bench_cartesian_to_hexagonal(b: &mut Bencher) {
@@ -330,5 +345,102 @@ mod test {
     fn bench_hexagonal_to_index(b: &mut Bencher) {
         b.iter(|| hexagonal_to_index(black_box(
             i32x4::splat(65536))))
+    }
+
+    #[test]
+    fn cartesian_to_hexagonal_smoke_test() {
+        // Check a few basic properties. This doesn't exhaustively check that
+        // the code is correct. The implementation here was verified by
+        // graphing the results and manually verifying them.
+        let zero = cartesian_to_hexagonal(i32x4::splat(0));
+        assert_eq!(0, zero.extract(0));
+        assert_eq!(0, zero.extract(1));
+        assert_eq!(0, zero.extract(2));
+        assert_eq!(0, zero.extract(3));
+
+        let pos_x = cartesian_to_hexagonal(i32x4::new(256, 0, 0, 0));
+        assert!(pos_x.extract(0) > 128, "Expected {} > 128", pos_x.extract(0));
+        assert!(pos_x.extract(1) < 0);
+        assert!(pos_x.extract(2) < 0);
+        assert_approx!(256, 65536, pos_x.dist_3L2_squared(zero));
+        assert_approx!(8, 0, pos_x.hsum_3());
+
+        let pos_y = cartesian_to_hexagonal(i32x4::new(0, 256, 0, 0));
+        assert!(pos_y.extract(1) > 0);
+        assert_approx!(256, 65536, pos_y.dist_3L2_squared(zero));
+        assert_approx!(8, 0, pos_y.hsum_3());
+    }
+
+    #[test]
+    fn cartesian_to_hexagonal_reproducibility() {
+        // Ensure that all implementations (i.e., compilations with different
+        // CPU features) produce the exact same results.
+        let mut hasher = fnv::FnvHasher::default();
+        for y in -1000..1000 {
+            for x in -1000..1000 {
+                let hexa = cartesian_to_hexagonal(
+                    i32x4::new(x, y, 0, 0));
+                hasher.write_i32(hexa.extract(0));
+                hasher.write_i32(hexa.extract(1));
+            }
+        }
+
+        assert_eq!(10460115884536241436, hasher.finish());
+    }
+
+    #[test]
+    fn hexagonal_to_index_smoke_test() {
+        let zero = hexagonal_to_index(i32x4::splat(0));
+        assert_eq!(0, zero.0);
+        assert_eq!(0, zero.1);
+
+        let pos_x = hexagonal_to_index(
+            cartesian_to_hexagonal(
+                i32x4::new(16384, 0, 0, 0)));
+        assert!(pos_x.0 > 16, "Expected A = {} to be > 16", pos_x.0);
+        assert!(pos_x.1 < -8, "Expected B = {} to be < -8", pos_x.1);
+    }
+
+    #[test]
+    fn hexagonal_to_index_reproducibility() {
+        let mut hasher = fnv::FnvHasher::default();
+        for y in -1000..1000 {
+            for x in -1000..1000 {
+                let index = hexagonal_to_index(
+                    i32x4::new(x, y, -(x+y), 0));
+                hasher.write_i32(index.0);
+                hasher.write_i32(index.1);
+            }
+        }
+
+        assert_eq!(5086880218595302901, hasher.finish());
+    }
+
+    #[test]
+    fn hexagonal_to_cartesian_inverse() {
+        // Test hexagonal_to_cartesian in terms of inverting
+        // cartesian_to_hexagonal and also ensure reproduciblity.
+        let mut hasher = fnv::FnvHasher::default();
+
+        for y in -1000..1000 {
+            for x in -1000..1000 {
+                let cart = i32x4::new(x, y, 0, 0);
+                let hexa = cartesian_to_hexagonal(cart);
+                let cart2 = hexagonal_to_cartesian(hexa);
+                assert!(cart.dist_2L1(cart2) <= 32,
+                        "<{}, {}> => <{}, {}, {}> => <{}, {}> (dist {})",
+                        cart.extract(0), cart.extract(1),
+                        hexa.extract(0), hexa.extract(1), hexa.extract(2),
+                        cart2.extract(0), cart2.extract(1),
+                        cart.dist_2L1(cart2));
+                assert_eq!(0, cart2.extract(2));
+                assert_eq!(0, cart2.extract(3));
+
+                hasher.write_i32(cart2.extract(0));
+                hasher.write_i32(cart2.extract(1));
+            }
+        }
+
+        assert_eq!(16366957391786003143, hasher.finish());
     }
 }

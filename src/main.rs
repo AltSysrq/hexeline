@@ -17,6 +17,7 @@
 #![allow(dead_code)]
 
 extern crate cgmath as cg;
+extern crate fnv;
 extern crate gl;
 extern crate png;
 extern crate sdl2;
