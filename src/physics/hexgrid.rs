@@ -299,17 +299,14 @@ pub fn hexagonal_to_cartesian(hexa: i32x4) -> i32x4 {
     */
     // Make a vector of (b,b,a,a) so we can do the first two columns at the
     // same time.
-    let bbaa = i32x4::new(hexa.extract(1), hexa.extract(1),
-                          hexa.extract(0), hexa.extract(0));
+    let bbaa = hexa.shuf(1, 1, 0, 0);
     // Compute the first two columns at the same time. The second column is
     // negated so it can be cancelled out later.
     let col21: i32x4 = bbaa * i32x4::new(-3344, 5793, -6689, 0);
     let c = i32x4::splat(hexa.extract(2));
     let col3 = c * i32x4::new(-3344, -5793, 0, 0);
 
-    let combined = col3 + col21 - i32x4::new(
-        col21.extract(2), col21.extract(3),
-        col21.extract(2), col21.extract(3));
+    let combined = col3 + col21 - col21.shuf(2, 3, 2, 3);
 
     combined >> 13
 }

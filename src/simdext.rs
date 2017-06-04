@@ -73,6 +73,11 @@ pub trait SimdExt {
     fn dist_3Linf(self, that: Self) -> Self::ULane;
 }
 
+pub trait SimdExt4 {
+    /// Shuffle self using the given immediates.
+    fn shuf(self, a: u32, b: u32, c: u32, d: u32) -> Self;
+}
+
 impl SimdExt for i32x4 {
     type Lane = i32;
     type ULane = u32;
@@ -147,6 +152,14 @@ impl SimdExt for i32x4 {
         let diff = (self - that).abs();
         max(max(diff.extract(0) as u32, diff.extract(1) as u32),
             diff.extract(2) as u32)
+    }
+}
+
+impl SimdExt4 for i32x4 {
+    #[inline(always)]
+    fn shuf(self, a: u32, b: u32, c: u32, d: u32) -> i32x4 {
+        i32x4::new(self.extract(a), self.extract(b),
+                   self.extract(c), self.extract(d))
     }
 }
 
