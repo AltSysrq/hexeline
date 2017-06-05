@@ -38,8 +38,9 @@ pub trait SimdExt {
     fn hsum_3(self) -> Self::Lane;
 
     /// Compute self * that / 2**point without intermediate overflow or loss of
-    /// precision.
-    fn mulfp(self, that: Self, point: u32) -> Self;
+    /// precision. No element of `small` may have a value outside of
+    /// [-32768,32767].
+    fn mulfp(self, small: Self, point: u32) -> Self;
 
     /// Return the 2D L1 distance between the two values.
     ///
@@ -120,8 +121,18 @@ impl SimdExt for i32x4 {
     }
 
     #[inline(always)]
-    fn mulfp(self, that: i32x4, point: u32) -> i32x4 {
-        i32x4_mulfp(self, that, point)
+    fn mulfp(self, small: i32x4, point: u32) -> i32x4 {
+        debug_assert!(0 == small.extract(0) >> 16 ||
+                      -1 == small.extract(0) >> 16);
+        debug_assert!(0 == small.extract(1) >> 16 ||
+                      -1 == small.extract(1) >> 16);
+        debug_assert!(0 == small.extract(2) >> 16 ||
+                      -1 == small.extract(2) >> 16);
+
+        let hi = (self >> 16) - (self >> 31);
+        let lo = self - (hi << 16);
+
+        (hi * small >> point) + (lo * small >> point)
     }
 
     #[inline]
@@ -233,70 +244,6 @@ fn i32x4_abs(a: i32x4) -> i32x4 {
         i32x4::splat(0) - a, a)
 }
 
-#[cfg(target_feature = "sse4.1")]
-#[inline(always)]
-fn i32x4_mulfp(a: i32x4, b: i32x4, point: u32) -> i32x4 {
-    // TODO Find a way to do this that doesn't require spilling to more
-    // registers
-    use simd::x86::sse4_1::Sse41I32x4;
-    // Multiply into 64-bit values
-    let lane_02 = a.low_mul(b);
-    let lane_13 = a.shuf(1, 1, 3, 3).low_mul(b.shuf(1, 1, 3, 3));
-    // Shift the result into the less significant dword of each lane
-    let lane_02 = lane_02 >> point;
-    let lane_13 = lane_13 >> point;
-    // If there's SSE, we can safely rely on memory layout
-    let (lane_02, lane_13): (i32x4, i32x4) = unsafe {
-        (mem::transmute(lane_02), mem::transmute(lane_13))
-    };
-
-    i32x4::new(lane_02.extract(0), lane_13.extract(0),
-               lane_02.extract(2), lane_13.extract(2))
-}
-
-#[cfg(all(target_feature = "sse2", not(target_feature = "sse4.1")))]
-#[inline(always)]
-fn i32x4_mulfp(a: i32x4, b: i32x4, point: u32) -> i32x4 {
-    // Same algorithm as with SSE4.1, but we have to expand to 64-bit first,
-    // then multiply separately.
-    use simd::x86::sse2::i64x2;
-    let a_lane_02: i64x2 = unsafe { mem::transmute(a) };
-    let b_lane_02: i64x2 = unsafe { mem::transmute(b) };
-    let a_lane_13 = a_lane_02 >> 32;
-    let b_lane_13 = b_lane_02 >> 32;
-    let a_lane_02 = a_lane_02 << 32 >> 32;
-    let b_lane_02 = b_lane_02 << 32 >> 32;
-
-    let lane_02 = a_lane_02 * b_lane_02;
-    let lane_13 = a_lane_13 * b_lane_13;
-    // Shift the result into the less significant dword of each lane
-    let lane_02 = lane_02 >> point;
-    let lane_13 = lane_13 >> point;
-
-    let (lane_02, lane_13): (i32x4, i32x4) = unsafe {
-        (mem::transmute(lane_02), mem::transmute(lane_13))
-    };
-
-    i32x4::new(lane_02.extract(0), lane_13.extract(0),
-               lane_02.extract(2), lane_13.extract(2))
-}
-
-// TODO ARM arch64 has i64x2, but I don't have anything with that architecture.
-
-#[cfg(not(any(target_feature = "sse2")))]
-#[inline(always)]
-fn i32x4_mulfp(a: i32x4, b: i32x4, point: u32) -> i32x4 {
-    // No 64-bit simd available. RIP performance.
-    macro_rules! lane {
-        ($lane:expr) => {
-            (((a.extract($lane) as i64) * (b.extract($lane) as i64))
-             >> point) as i32
-        }
-    }
-
-    i32x4::new(lane!(0), lane!(1), lane!(2), lane!(3))
-}
-
 #[cfg(test)]
 mod test {
     use std::i32;
@@ -359,19 +306,19 @@ mod test {
             let a = fibs[fibs.len() - 4] as u64;
             let b = fibs[fibs.len() - 2] as u64;
             let f = a + b;
-            if f <= 1u64 << 30 {
+            if f <= 32767 {
                 fibs.push(f as i32);
                 fibs.push(-(f as i32));
             } else {
                 break;
             }
         }
-        fibs.push(1 << 30);
-        fibs.push(-1 << 30);
+        fibs.push(32767);
+        fibs.push(32768);
 
         for &lhs in &fibs {
             for &rhs in &fibs {
-                for point in 1..31 {
+                for point in 1..16 {
                     if rhs.abs() >> point > 2 { continue; }
 
                     let expected = (lhs as i64) * (rhs as i64) >> point;

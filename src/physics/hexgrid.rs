@@ -213,12 +213,10 @@ pub const CELL_COORD_MASK: i32 = (1 << CONTINUOUS_TO_CELL_SHIFT) - 1;
 /// 1) to hexagonal coordinates (A, B, C in 0, 1, 2). Output component 3 is
 /// always 0.
 pub fn cartesian_to_hexagonal(cart: i32x4) -> i32x4 {
-    // TODO The codegen here with SSE2 (but not SSE4.1) is quite bizarre and
-    // has 11 multiplies rather than the 4 we'd expect.
     let x = i32x4::splat(cart.extract(0));
     let y = i32x4::splat(cart.extract(1));
-    let col1 = x.mulfp(i32x4::new(6689, -3344, -3344, 0), 13);
-    let col2 = y.mulfp(i32x4::new(0, 5792, -5792, 0), 13);
+    let col1 = x.mulfp(i32x4::new(26755, -13377, -13377, 0), 15);
+    let col2 = y.mulfp(i32x4::new(0, 23170, -23170, 0), 15);
     col1 + col2
 }
 
@@ -304,9 +302,9 @@ pub fn hexagonal_to_cartesian(hexa: i32x4) -> i32x4 {
     let bbaa = hexa.shuf(1, 1, 0, 0);
     // Compute the first two columns at the same time. The second column is
     // negated so it can be cancelled out later.
-    let col21: i32x4 = bbaa.mulfp(i32x4::new(-3344, 5793, -6689, 0), 13);
+    let col21: i32x4 = bbaa.mulfp(i32x4::new(-13377, 23170, -26755, 0), 15);
     let c = i32x4::splat(hexa.extract(2));
-    let col3 = c.mulfp(i32x4::new(-3344, -5793, 0, 0), 13);
+    let col3 = c.mulfp(i32x4::new(-13377, -23170, 0, 0), 15);
 
     let combined = col3 + col21 - col21.shuf(2, 3, 2, 3);
 
@@ -366,7 +364,8 @@ mod test {
 
         let pos_y = cartesian_to_hexagonal(i32x4::new(0, 256, 0, 0));
         assert!(pos_y.extract(1) > 0);
-        assert_approx!(256, 65536, pos_y.dist_3L2_squared(zero));
+        // Expect 5 bits of precision to be lost
+        assert_approx!(512, 65536, pos_y.dist_3L2_squared(zero));
         assert_approx!(8, 0, pos_y.hsum_3());
     }
 
@@ -384,7 +383,7 @@ mod test {
             }
         }
 
-        assert_eq!(12911963394097092379, hasher.finish());
+        assert_eq!(8664580250012815522, hasher.finish());
     }
 
     #[test]
@@ -440,6 +439,6 @@ mod test {
             }
         }
 
-        assert_eq!(4995934429034136442, hasher.finish());
+        assert_eq!(11687023219082859730, hasher.finish());
     }
 }
