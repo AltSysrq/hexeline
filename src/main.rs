@@ -34,6 +34,7 @@ mod physics;
 
 fn main() {
     test_hexgrid();
+    if true { return; }
 
     fn die<T>(message: String) -> T {
         writeln!(&mut io::stderr(), "Failed to initialise SDL: {}", message)
@@ -145,8 +146,10 @@ fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders) {
 fn test_hexgrid() {
     use std::fs;
     use std::io;
+    use std::num::Wrapping;
 
     use simd::*;
+    use physics::xform::Affine2d;
     use png::HasParameters;
 
     const W: usize = 1920;
@@ -185,6 +188,16 @@ fn test_hexgrid() {
             data[y*W*3 + x*3 + 1] = rg;
             data[y*W*3 + x*3 + 2] = b;
         }
+    }
+
+    let radius = i32x4::new(100, 0, 0, 0);
+    for theta in -32768i32..32768i32 {
+        let affine = Affine2d::rotate(Wrapping(theta as i16));
+        let xformed = affine * radius;
+        println!("{:?} => {:?} => {:?}",
+                 theta, affine, xformed);
+        let px = xformed + i32x4::new(128, 128, 0, 0);
+        data[(px.extract(1)*(W as i32)*3 + px.extract(0)*3) as usize] = 255;
     }
 
     let out = io::BufWriter::new(fs::File::create("hexes.png").unwrap());

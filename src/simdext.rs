@@ -132,7 +132,15 @@ impl SimdExt for i32x4 {
         let hi = (self >> 16) - (self >> 31);
         let lo = self - (hi << 16);
 
-        (hi * small >> point) + (lo * small >> point)
+        let hiprod = hi * small;
+        let hiprod = if point == 16 {
+            hiprod
+        } else if point < 16 {
+            hiprod << (16 - point)
+        } else {
+            hiprod >> (point - 16)
+        };
+        hiprod + (lo * small >> point)
     }
 
     #[inline]
@@ -306,7 +314,7 @@ mod test {
             let a = fibs[fibs.len() - 4] as u64;
             let b = fibs[fibs.len() - 2] as u64;
             let f = a + b;
-            if f <= 32767 {
+            if f <= i32::MAX as i64 as u64 {
                 fibs.push(f as i32);
                 fibs.push(-(f as i32));
             } else {
@@ -319,7 +327,7 @@ mod test {
         for &lhs in &fibs {
             for &rhs in &fibs {
                 for point in 1..16 {
-                    if rhs.abs() >> point > 2 { continue; }
+                    if rhs.abs() > 32768 { continue; }
 
                     let expected = (lhs as i64) * (rhs as i64) >> point;
                     if expected > i32::MAX as i64 ||
