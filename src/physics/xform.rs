@@ -70,7 +70,7 @@ adjusting the first approximation:
   Q + P = 1
 ```
 
-The values of (Q,P) which produce the minimum absolute error are (0.755,0.225).
+The values of (Q,P) which produce the minimum absolute error are (0.775,0.225).
 We also need to do the same absolute-value trick for this to work on both sides
 of the domain. The formula can also be simplified:
 
