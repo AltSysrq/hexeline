@@ -91,6 +91,9 @@ the first approximation is mostly bit-shifts, with the only multiply being
 θ|θ|. For the second approximation, we sacrifice a little bit of accuracy to
 set P=1/4, which replaces more multiplies by bit-shifts.
 
+This approach to cos/sin really is fast, too. On my main test system, computing
+the full rotation matrix takes 3ns, whereas `f32::cos()` takes 7ns.
+
 Besides basic trigonometry, another thing we need to do here is mimic cartesian
 transformation in hexagonal space; i.e., compute a 2x2 matrix to produce the
 same transform on (A,B) that as the original would in the (X,Y) coordinate
@@ -358,5 +361,11 @@ mod test {
     #[bench]
     fn bench_rotate(b: &mut Bencher) {
         b.iter(|| Affine2d::rotate(black_box(Wrapping(1024))));
+    }
+
+    // For comparison to our combined cos/sin
+    #[bench]
+    fn bench_libc_cos(b: &mut Bencher) {
+        b.iter(|| black_box(1.2f32).cos())
     }
 }
