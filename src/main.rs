@@ -148,7 +148,7 @@ fn test_coords() {
     use std::io;
     use std::num::Wrapping;
 
-    use simd::*;
+    use physics::coords::*;
     use physics::xform::Affine2d;
     use png::HasParameters;
 
@@ -159,26 +159,23 @@ fn test_coords() {
     let mut data = vec![0u8;W*H*3];
     for y in 0..H {
         for x in 0..W {
-            let cart = i32x4::new(
-                (x * SCALE) as i32,
-                (y * SCALE) as i32,
-                0, 0);
-            let hexa = physics::coords::cartesian_to_hexagonal(cart);
-            let hex = physics::coords::hexagonal_to_index(hexa);
+            let cart = Vos((x * SCALE) as i32, (y * SCALE) as i32);
+            let hexa = cart.to_vhr();
+            let hex = hexa.single().to_index();
 
             let mut rg = (hex.1 * 16) as u8;
             let mut b = (hex.0 * 16) as u8;
 
-            if (hexa.extract(0) & physics::coords::CELL_COORD_MASK) <= 32 {
+            if (hexa.a() & physics::coords::CELL_COORD_MASK) <= 32 {
                 rg ^= 255;
             }
-            if (hexa.extract(1) & physics::coords::CELL_COORD_MASK) <= 32 {
+            if (hexa.b() & physics::coords::CELL_COORD_MASK) <= 32 {
                 b ^= 255;
             }
 
-            let recart = physics::coords::hexagonal_to_cartesian(hexa);
-            if recart.extract(0) / (SCALE as i32) & 255 < 16 ||
-                recart.extract(1) / (SCALE as i32) & 255 < 16
+            let recart = hexa.to_vos();
+            if recart.x() / (SCALE as i32) & 255 < 16 ||
+                recart.y() / (SCALE as i32) & 255 < 16
             {
                 rg = 255;
                 b = 255;
@@ -190,14 +187,14 @@ fn test_coords() {
         }
     }
 
-    let radius = i32x4::new(100, 0, 0, 0);
+    let radius = Vod(100, 0);
     for theta in -32768i32..32768i32 {
         let affine = Affine2d::rotate(Wrapping(theta as i16));
         let xformed = affine * radius;
         println!("{:?} => {:?} => {:?}",
                  theta, affine, xformed);
-        let px = xformed + i32x4::new(128, 128, 0, 0);
-        data[(px.extract(1)*(W as i32)*3 + px.extract(0)*3) as usize] = 255;
+        let px = xformed + Vod(128, 128);
+        data[(px.y()*(W as i32)*3 + px.x()*3) as usize] = 255;
     }
 
     let out = io::BufWriter::new(fs::File::create("hexes.png").unwrap());

@@ -140,37 +140,59 @@ transform (see `coords.rs`) always cancels out, so it is not notated here.
 
 */
 
+use std::marker::PhantomData;
 use std::ops;
 
 use simd::*;
 use simdext::*;
 
 use physics::{Angle, DEG_90_CW, DEG_180};
+use physics::coords::*;
 
 /// A 2D affine transform.
 ///
 /// This is a 2x2 matrix stored in row-major order. The fixed-point shift is
 /// given by `AFFINE_POINT`.
 #[derive(Debug, Clone, Copy)]
-pub struct Affine2d(pub i32x4);
+pub struct Affine2d<S : Space>(i32x4, PhantomData<S>);
+pub type Affine2dO = Affine2d<Orthogonal>;
+pub type Affine2dH = Affine2d<Hexagonal>;
 
 /// Position of the fixed point in an `Affine2d`.
 ///
 /// A value of 10 leaves 5 bits for the integer part.
 pub const AFFINE_POINT: u32 = 10;
 
-impl Default for Affine2d {
-    fn default() -> Affine2d {
+impl<S : Space> Default for Affine2d<S> {
+    fn default() -> Affine2d<S> {
         Affine2d::identity()
     }
 }
 
-impl Affine2d {
-    pub fn identity() -> Affine2d {
-        Affine2d(i32x4::new(1, 0, 0, 1))
+impl<S : Space> Affine2d<S> {
+    #[inline]
+    pub fn identity() -> Self {
+        Affine2d(i32x4::new(1, 0, 0, 1), PhantomData)
     }
 
-    pub fn rotate(sin_angle: Angle) -> Affine2d {
+    #[inline(always)]
+    pub fn from_repr(repr: i32x4) -> Self {
+        Affine2d(repr, PhantomData)
+    }
+
+    #[inline(always)]
+    pub fn repr(self) -> i32x4 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub fn scale(x: i32, y: i32) -> Self {
+        Affine2d(i32x4::new(x, 0, 0, y), PhantomData)
+    }
+}
+
+impl Affine2dO {
+    pub fn rotate(sin_angle: Angle) -> Affine2dO {
         let cos_angle = sin_angle + DEG_90_CW;
         let neg_sin_angle = sin_angle + DEG_180;
         let theta = i32x4::new(cos_angle.0 as i32, neg_sin_angle.0 as i32,
@@ -191,15 +213,10 @@ impl Affine2d {
         // Use the Py|y| + y - Py form so we don't need to load any other simd
         // constants. P=1/4, so Py = y >> 2
         let py = y >> 2;
-        Affine2d(((py * y.abs()) >> AFFINE_POINT) + y - py)
+        Affine2d(((py * y.abs()) >> AFFINE_POINT) + y - py, PhantomData)
     }
 
-    #[inline(always)]
-    pub fn scale(x: i32, y: i32) -> Self {
-        Affine2d(i32x4::new(x, 0, 0, y))
-    }
-
-    pub fn to_hexagonal(self) -> Self {
+    pub fn to_hexagonal(self) -> Affine2dH {
         /*
         | m0 + 1/sqrt(3)*m1                                 2/sqrt(3)*m1       |
         | -1/2*m0 + sqrt(3)/2*m2 - 1/sqrt(3)/2*m1 + 1/2*m3  -1/sqrt(3)*m1 + m3 |
@@ -246,24 +263,25 @@ impl Affine2d {
                             half.extract(3), unit.extract(3)) +
                  mulled -
                  i32x4::new(0, 0, half_mulled.extract(0), 0) -
-                 i32x4::new(0, half.extract(1), half.extract(0), 0))
+                 i32x4::new(0, half.extract(1), half.extract(0), 0),
+                 PhantomData)
     }
 }
 
-impl ops::Mul<i32x4> for Affine2d {
-    type Output = i32x4;
-    fn mul(self, v: i32x4) -> i32x4 {
+impl<S : Space> ops::Mul<DualVector<S>> for Affine2d<S> {
+    type Output = DualVector<S>;
+    fn mul(self, v: DualVector<S>) -> DualVector<S> {
         // TODO We'd need fewer shuffles here if things were laid out better
-        let prod = v.shuf(0, 0, 1, 1).mulfp(
-            self.0.shuf(0, 2, 1, 3), AFFINE_POINT);
-        prod + prod.shuf(2, 3, 2, 3)
+        let prod = v.repr().mulfp(self.0, AFFINE_POINT);
+        DualVector::from_repr(prod.shuf(0, 2, 1, 3) +
+                              prod.shuf(1, 3, 0, 2))
     }
 }
 
-impl ops::Mul<Affine2d> for Affine2d {
-    type Output = Affine2d;
+impl<S : Space> ops::Mul<Affine2d<S>> for Affine2d<S> {
+    type Output = Affine2d<S>;
 
-    fn mul(self, rhs: Affine2d) -> Affine2d {
+    fn mul(self, rhs: Affine2d<S>) -> Affine2d<S> {
         // | 00+12 01+13 |
         // | 20+32 21+33 |
         //
@@ -271,7 +289,8 @@ impl ops::Mul<Affine2d> for Affine2d {
         // < 12 13 32 33 >
         Affine2d(
             (self.0.shuf(0, 0, 2, 2) * rhs.0.shuf(0, 1, 0, 1) +
-             self.0.shuf(1, 1, 3, 3) * rhs.0.shuf(2, 3, 2, 3)) >> AFFINE_POINT)
+             self.0.shuf(1, 1, 3, 3) * rhs.0.shuf(2, 3, 2, 3)) >> AFFINE_POINT,
+            PhantomData)
     }
 }
 
@@ -280,71 +299,59 @@ mod test {
     use std::num::Wrapping;
     use test::{Bencher, black_box};
 
-    use simd::*;
     use simdext::*;
 
     use physics::{DEG_90_CW, DEG_90_CCW, DEG_180};
-    use physics::coords;
     use super::*;
 
     #[test]
     fn simple_rotations() {
-        let orig = i32x4::new(1024, 256, 0, 0);
+        let orig = Vod(1024, 256);
         let rot0 = Affine2d::rotate(Wrapping(0)) * orig;
-        assert!(orig.dist_2L1(rot0) < 8,
+        assert!(orig.repr().dist_2L1(rot0.repr()) < 8,
                 "rotate(0) * {:?} => {:?}", orig, rot0);
 
         let rotcw = Affine2d::rotate(DEG_90_CW) * orig;
-        assert!(i32x4::new(-256, 1024, 0, 0).dist_2L1(rotcw) < 8,
+        assert!(Vod(-256, 1024).repr().dist_2L1(rotcw.repr()) < 8,
                 "rotate(90) * {:?} => {:?}", orig, rotcw);
 
         let rotccw = Affine2d::rotate(DEG_90_CCW) * orig;
-        assert!(i32x4::new(256, -1024, 0, 0).dist_2L1(rotccw) < 8,
+        assert!(Vod(256, -1024).repr().dist_2L1(rotccw.repr()) < 8,
                 "rotate(-90) * {:?} => {:?}", orig, rotccw);
 
         let flip = Affine2d::rotate(DEG_180) * orig;
-        assert!(i32x4::new(-1024, -256, 0, 0).dist_2L1(flip) < 8,
+        assert!(Vod(-1024, -256).repr().dist_2L1(flip.repr()) < 8,
                 "rotate(180) * {:?} => {:?}", orig, flip);
     }
 
     #[test]
     fn fine_rotation() {
-        let orig = i32x4::new(1024, 256, 0, 0);
+        let orig = Vod(1024, 256);
         let rotated = Affine2d::rotate(Wrapping(5461 /* 30 deg */)) * orig;
-        assert!(i32x4::new(759, 734, 0, 0).dist_2L1(rotated) < 16,
+        assert!(Vod(759, 734).repr().dist_2L1(rotated.repr()) < 16,
                 "rotate(30) * {:?} => {:?}", orig, rotated);
     }
 
     #[test]
     fn matrix_mult() {
-        let orig = i32x4::new(1024, 256, 0, 0);
+        let orig = Vod(1024, 256);
         let result = Affine2d::scale(2 << AFFINE_POINT, 1 << AFFINE_POINT) *
             Affine2d::rotate(DEG_90_CW) * orig;
 
-        assert!(i32x4::new(-512, 1024, 0, 0).dist_2L1(result) < 8,
+        assert!(Vod(-512, 1024).repr().dist_2L1(result.repr()) < 8,
                 "scale(2,1) * rotate(90) * {:?} => {:?}",
                 orig, result);
     }
 
     #[test]
     fn affine_to_hexagonal() {
-        // TODO Shouldn't be necessary; hexagonal_to_cartesian() is
-        // unnecessarily complicated
-        fn fixup_c(v: i32x4) -> i32x4 {
-            i32x4::new(v.extract(0), v.extract(1),
-                       -v.extract(0)-v.extract(1), 0)
-        }
-
-        let orig = i32x4::new(102400, 25600, 0, 0);
+        let orig = Vod(102400, 25600);
         let rotation = Affine2d::rotate(Wrapping(5461 /* 30 deg */));
         let expected = rotation * orig;
-        println!("hexagonal matrix: {:?}", rotation.to_hexagonal());
-        let actual = coords::hexagonal_to_cartesian(
-            fixup_c(
-                rotation.to_hexagonal() *
-                coords::cartesian_to_hexagonal(orig)));
+        let actual = (rotation.to_hexagonal() * orig.single().to_vhr().dual())
+            .redundant().to_vos();
 
-        assert!(expected.dist_2L1(actual) < 256,
+        assert!(expected.repr().dist_2L1(actual.repr()) < 256,
                 "Expected {:?}, got {:?}", expected, actual);
     }
 
