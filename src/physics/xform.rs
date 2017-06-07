@@ -96,7 +96,7 @@ transformation in hexagonal space; i.e., compute a 2x2 matrix to produce the
 same transform on (A,B) that as the original would in the (X,Y) coordinate
 would have. We can find this by substituting a translation into cartesian
 coordinates, rotation, and translation back. Note that the `k` term in the
-transform (see `hexgrid.rs`) always cancels out, so it is not notated here.
+transform (see `coords.rs`) always cancels out, so it is not notated here.
 
 ```text
   ; Translate new cartesian coords back to hexagonal
@@ -284,7 +284,7 @@ mod test {
     use simdext::*;
 
     use physics::{DEG_90_CW, DEG_90_CCW, DEG_180};
-    use physics::hexgrid;
+    use physics::coords;
     use super::*;
 
     #[test]
@@ -339,10 +339,10 @@ mod test {
         let rotation = Affine2d::rotate(Wrapping(5461 /* 30 deg */));
         let expected = rotation * orig;
         println!("hexagonal matrix: {:?}", rotation.to_hexagonal());
-        let actual = hexgrid::hexagonal_to_cartesian(
+        let actual = coords::hexagonal_to_cartesian(
             fixup_c(
                 rotation.to_hexagonal() *
-                hexgrid::cartesian_to_hexagonal(orig)));
+                coords::cartesian_to_hexagonal(orig)));
 
         assert!(expected.dist_2L1(actual) < 256,
                 "Expected {:?}, got {:?}", expected, actual);

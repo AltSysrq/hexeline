@@ -33,7 +33,7 @@ mod graphic;
 mod physics;
 
 fn main() {
-    test_hexgrid();
+    test_coords();
     if true { return; }
 
     fn die<T>(message: String) -> T {
@@ -143,7 +143,7 @@ fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders) {
     }
 }
 
-fn test_hexgrid() {
+fn test_coords() {
     use std::fs;
     use std::io;
     use std::num::Wrapping;
@@ -163,20 +163,20 @@ fn test_hexgrid() {
                 (x * SCALE) as i32,
                 (y * SCALE) as i32,
                 0, 0);
-            let hexa = physics::hexgrid::cartesian_to_hexagonal(cart);
-            let hex = physics::hexgrid::hexagonal_to_index(hexa);
+            let hexa = physics::coords::cartesian_to_hexagonal(cart);
+            let hex = physics::coords::hexagonal_to_index(hexa);
 
             let mut rg = (hex.1 * 16) as u8;
             let mut b = (hex.0 * 16) as u8;
 
-            if (hexa.extract(0) & physics::hexgrid::CELL_COORD_MASK) <= 32 {
+            if (hexa.extract(0) & physics::coords::CELL_COORD_MASK) <= 32 {
                 rg ^= 255;
             }
-            if (hexa.extract(1) & physics::hexgrid::CELL_COORD_MASK) <= 32 {
+            if (hexa.extract(1) & physics::coords::CELL_COORD_MASK) <= 32 {
                 b ^= 255;
             }
 
-            let recart = physics::hexgrid::hexagonal_to_cartesian(hexa);
+            let recart = physics::coords::hexagonal_to_cartesian(hexa);
             if recart.extract(0) / (SCALE as i32) & 255 < 16 ||
                 recart.extract(1) / (SCALE as i32) & 255 < 16
             {

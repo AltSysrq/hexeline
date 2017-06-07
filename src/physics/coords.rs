@@ -13,7 +13,9 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-/*! Utilities for working in hexagonal space.
+/*! Utilities for working with coordinates.
+
+## Hexagonal Space
 
 Inspiration for the core idea here comes from
 http://keekerdc.com/2011/03/hexagon-grids-coordinate-systems-and-distance-calculations/
