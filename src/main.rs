@@ -173,7 +173,7 @@ fn test_coords() {
                 b ^= 255;
             }
 
-            let recart = hexa.to_vos();
+            let recart = hexa.dual().to_vod();
             if recart.x() / (SCALE as i32) & 255 < 16 ||
                 recart.y() / (SCALE as i32) & 255 < 16
             {

@@ -573,35 +573,28 @@ impl Vhs {
     }
 }
 
-impl Vhr {
-    // TODO This should be on Vhs and not use C explicitly
-    pub fn to_vos(self) -> Vos {
+impl Vhd {
+    pub fn to_vod(self) -> Vod {
         /*
         x = k*a - k/2*(c + b)
         y = k*sqrt(3)/2 * (b - c)
 
-        x = k*a - k/2*b - k/2*c
-        y = k*sqrt(3)/2 * b - k*sqrt(3)/2 * c
+        c = -a-b
+        x = k*a - k/2*(-a)
+        x = 3/2*k*a
+        y = k*sqrt(3)/2 * (a + 2*b)
+        y = k*sqrt(3)/2 * a + k*sqrt(3) * b
 
-        x = sqrt(2)/sqrt(3)*a - sqrt(2)/sqrt(3)/2*b - sqrt(2)/sqrt(3)/2*b
-        y = sqrt(2)/2*b - sqrt(2)/2*c
+        k = sqrt(2)/sqrt(3)
+        x = sqrt(3)/sqrt(2) * a
+        y = 1/sqrt(2) * a + sqrt(2) * b
 
-        | x |   | sqrt(2)/sqrt(3)   -sqrt(2)/sqrt(3)/2  -sqrt(2)/sqrt(3)/2 | | a |
-        | y | = | 0                 sqrt(2)/2           -sqrt(2)/2         | | b |
-        | _ |   | 0                 0                   0                  | | c |
+        | x |   | 3/2        0       |
+        | y | = | 1/sqrt(2)  sqrt(2) |
         */
-        // Make a vector of (b,b,a,a) so we can do the first two columns at the
-        // same time.
-        let bbaa = self.repr().shuf(1, 1, 0, 0);
-        // Compute the first two columns at the same time. The second column is
-        // negated so it can be cancelled out later.
-        let col21: i32x4 = bbaa.mulfp(i32x4::new(-13377, 23170, -26755, 0), 15);
-        let c = i32x4::splat(self.c());
-        let col3 = c.mulfp(i32x4::new(-13377, -23170, 0, 0), 15);
-
-        let combined = col3 + col21 - col21.shuf(2, 3, 2, 3);
-
-        Vos::from_repr(combined)
+        let prod = self.repr().mulfp(
+            i32x4::new(20066, 0, 11585, 23170), 14);
+        Vod::from_repr(prod.shuf(0, 2, 0, 2) + prod.shuf(1, 3, 1, 3))
     }
 }
 
@@ -701,7 +694,7 @@ mod test {
     }
 
     #[test]
-    fn vhr_to_vos_inverse() {
+    fn vhd_to_vod_inverse() {
         // Test hexagonal_to_cartesian in terms of inverting
         // cartesian_to_hexagonal and also ensure reproduciblity.
         let mut hasher = fnv::FnvHasher::default();
@@ -710,7 +703,7 @@ mod test {
             for x in -1000..1000 {
                 let cart = Vos(x, y);
                 let hexa = cart.to_vhr();
-                let cart2 = hexa.to_vos();
+                let cart2 = hexa.dual().to_vod();
                 assert!(cart.repr().dist_2L1(cart2.repr()) <= 32,
                         "{} => {} => {} (dist {})",
                         cart, hexa, cart2,
@@ -721,6 +714,6 @@ mod test {
             }
         }
 
-        assert_eq!(11687023219082859730, hasher.finish());
+        assert_eq!(12864379608347279471, hasher.finish());
     }
 }

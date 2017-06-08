@@ -352,7 +352,7 @@ mod test {
         let rotation = Affine2d::rotate(Wrapping(5461 /* 30 deg */));
         let expected = rotation * orig;
         let actual = (rotation.to_hexagonal() * orig.single().to_vhr().dual())
-            .redundant().to_vos();
+            .to_vod();
 
         assert!(expected.repr().dist_2L1(actual.repr()) < 256,
                 "Expected {:?}, got {:?}", expected, actual);
