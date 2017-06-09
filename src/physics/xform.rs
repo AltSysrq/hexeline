@@ -195,6 +195,7 @@ impl<S : Space> Affine2d<S> {
 }
 
 impl Affine2dO {
+    /// Computes the transform to rotate clockwise around the origin.
     pub fn rotate(sin_angle: Angle) -> Affine2dO {
         let cos_angle = sin_angle + DEG_90_CW;
         let neg_sin_angle = sin_angle + DEG_180;
@@ -219,6 +220,8 @@ impl Affine2dO {
         Affine2d(((py * y.abs()) >> AFFINE_POINT) + y - py, PhantomData)
     }
 
+    /// Converts this transform so that it performs the same transform in
+    /// hexagonal space.
     pub fn to_hexagonal(self) -> Affine2dH {
         /*
         | m0 + 1/sqrt(3)*m1                                 2/sqrt(3)*m1       |
@@ -268,6 +271,46 @@ impl Affine2dO {
                  i32x4::new(0, 0, half_mulled.extract(0), 0) -
                  i32x4::new(0, half.extract(1), half.extract(0), 0),
                  PhantomData)
+    }
+}
+
+impl Affine2dH {
+    /// Approximately equivalent to `Affine2dO::rotate(angle).to_hexagonal()`,
+    /// but more efficient.
+    pub fn rotate_hex(angle: Angle) -> Affine2dH {
+        /*
+        From to_hexagonal:
+
+        = m0            0               1/2*m3          m3
+        + 1/sqrt(3)*m1  2/sqrt(3)*m1    sqrt(3)/2*m2   -1/sqrt(3)*m1
+        - 0             0               1/sqrt(3)/2*m1  0
+        - 0             0               1/2*m0          0
+
+        m0 = cos, m1 = -sin, m2 = sin, m3 = cos
+
+        = cos           0               cos/2           cos
+        + -sin/sqrt(3)  -2*sin/sqrt(3)  sin*sqrt(3)/2   sin/sqrt(3)
+        + 0             0               sin/sqrt(3)/2   0
+        + 0             0               -cos/2          0
+
+        sin*sqrt(3)/2 + sin/sqrt(3)/2 =
+        sin*3/sqrt(3)/2 + sin/sqrt(3)/2 =
+        sin*4/sqrt(3)/2 =
+        2*sin/sqrt(3)
+
+        = cos           -sin/sqrt(3)    sin/sqrt(3)     cos
+        + -sin/sqrt(3)  -sin/sqrt(3)    sin/sqrt(3)     sin/sqrt(3)
+
+        Distinct factors:
+        cos: 1
+        sin: 1/sqrt(3)
+        -sin: 1/sqrt(3)
+        */
+        let unit = Affine2dO::rotate(angle).repr();
+        let mult: i32x4 = unit * i32x4::new(
+            32768, 18919, 18919, 32768) >> 15;
+
+        Affine2dH::from_repr(mult + mult.shuf(1, 1, 2, 2))
     }
 }
 
@@ -358,9 +401,43 @@ mod test {
                 "Expected {:?}, got {:?}", expected, actual);
     }
 
+    #[test]
+    fn rotate_hex() {
+        let orig = Vod(102400, 0);
+        for theta in -32768i32..32768i32 {
+            let theta = Wrapping(theta as i16);
+            let rot_ortho = (Affine2d::rotate(theta) * orig).single()
+                .to_vhr().single();
+            let rot_hex = (Affine2d::rotate_hex(theta) *
+                           orig.single().to_vhr().dual()).single();
+
+            assert!(rot_ortho.repr().dist_2L1(rot_hex.repr()) < 256,
+                    "{} rot({}) to_hex = {}, {} to_hex rot_hex({}) = {}, \
+                     dist = {}", orig, theta.0, rot_ortho,
+                    orig, theta.0, rot_hex,
+                    rot_ortho.repr().dist_2L1(rot_hex.repr()));
+        }
+    }
+
     #[bench]
     fn bench_rotate(b: &mut Bencher) {
         b.iter(|| Affine2d::rotate(black_box(Wrapping(1024))));
+    }
+
+    #[bench]
+    fn bench_rotate_hex(b: &mut Bencher) {
+        b.iter(|| Affine2d::rotate_hex(black_box(Wrapping(1024))));
+    }
+
+    #[bench]
+    fn bench_matrix_vector_mult(b: &mut Bencher) {
+        b.iter(|| black_box(Affine2dO::identity()) * black_box(Vod(1, 1)));
+    }
+
+    #[bench]
+    fn bench_matrix_matrix_mult(b: &mut Bencher) {
+        b.iter(|| black_box(Affine2dO::identity()) *
+               black_box(Affine2dO::identity()));
     }
 
     // For comparison to our combined cos/sin
