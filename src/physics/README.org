@@ -37,8 +37,11 @@ a uniform quantisation and ensures reproduciblity.
 
 Spatial coordinates are signed 32-bit integers. A screen-width at default zoom
 is 65536 units across. Negative absolute coordinates are not normally used;
-signedness is used for expressing relative coordinates. Coordinates follow 2D
-drawing conventions: +X is right, +Y is down.
+signedness is used for expressing relative coordinates. Screen coordinates
+follow 2D drawing conventions: +X is right, +Y is down.
+
+Most physics however take place in hexagonal coordinates (as defined in
+`coords.rs`).
 
 Velocity is simply a pair of signed integers indicating delta position per
 tick. This quantises velocity to 100 units/sec, or about one pixel per 3
@@ -81,7 +84,7 @@ environment.
 
 To quicken collision detection, we use the same system Abendstern did, wherein
 we keep the objects (in this case, just the common properties) sorted ascending
-by the rightmost X coordinate of their bounding circle.
+by the rightmost A coordinate of their bounding circle.
 
 * Common Data Layout
 
@@ -89,19 +92,19 @@ Goal: Cram all the common data into 2 128-bit SSE registers.
 
 Something like the below (note that the real thing is slightly different):
 
-xmm0[  0.. 31] i32 X coordinate + rounded-radius
-xmm0[ 32.. 63] i32 Y coordinate
+xmm0[  0.. 31] i32 A coordinate + rounded-radius
+xmm0[ 32.. 63] i32 B coordinate
 xmm0[ 64.. 79] i16 Theta
 xmm0[ 80.. 95] u8 Rounded-radius / 256
 xmm0[ 96..103] u8 Collision group
 xmm0[104..111] u8 Object type
 xmm0[112..128] u16 Extended data pointer (if applicable)
-xmm1[  0.. 15] i16 X velocity
-xmm1[ 16.. 23] u8 X friction
-xmm1[ 24.. 31] i8 X acceleration
-xmm1[ 32.. 47] i16 Y velocity
-xmm1[ 48.. 55] u8 Y friction
-xmm1[ 56.. 63] i8 Y acceleration
+xmm1[  0.. 15] i16 A velocity
+xmm1[ 16.. 23] u8 A friction
+xmm1[ 24.. 31] i8 A acceleration
+xmm1[ 32.. 47] i16 B velocity
+xmm1[ 48.. 55] u8 B friction
+xmm1[ 56.. 63] i8 B acceleration
 xmm1[ 64.. 79] i16 Theta velocity * 4
 xmm1[ 80.. 87] u8 Theta friction
 xmm1[ 88.. 95] i8 Theta acceleration
@@ -116,14 +119,14 @@ Note that velocities are laid out parallel to the coordinates so they can be
 added to the position without extracting them first (after bitmasking the other
 data away).
 
-The way the X coordinate is stored means that sorting values by treating xmm0
+The way the A coordinate is stored means that sorting values by treating xmm0
 as an i32x4 is sufficient to achieve the correct ordering.
 
 Data is also laid out such that collision detection only cares about xmm0 while
 sweeping.
 
 "Rounded radius" is the physical radius of the object (relative to the nominal
-X coordinate) rounded up to the next multiple of 256.
+A coordinate) rounded up to the next multiple of 256.
 
 Not all object types need extended data; those which don't can store extra
 information in the extended data pointer field.
@@ -192,8 +195,8 @@ Since we don't want to pay extra memory/cache bandwidth that would be needed by
 the traditional two-pass update-then-collide system, we instead perform
 collision detection inline with updating. After the general updating of an
 object, we "slide" it into place in the common data array, then scan backwards
-for objects whose X bounding box (X-2*radius..X) overlaps with the object in
-question. Since we keep the array sorted by the upper X bound, we only need to
+for objects whose A bounding box (A-2*radius..A) overlaps with the object in
+question. Since we keep the array sorted by the upper A bound, we only need to
 look at a handful of objects here.
 
 The system has two types of physical objects: point particles, with radius = 0,
@@ -206,7 +209,7 @@ Objects with the same non-zero collision group are skipped. This is not so much
 an optimisation as it is a mechanism to prevent projectiles fired by a player
 from immediately colliding with their ship.
 
-Objects overlapping on the X axis are then checked whether their Y axis bounds
+Objects overlapping on the A axis are then checked whether their B axis bounds
 overlap; those that do not are skipped.
 
 At this point, we need to do precise collision detection. There's two cases:

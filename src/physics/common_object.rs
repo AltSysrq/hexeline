@@ -34,9 +34,9 @@ pub struct CommonObject {
     /// Position, collision, and identity data.
     ///
     /// Field 0:
-    ///   - [0..31] biased_x
+    ///   - [0..31] biased_a
     /// Field 1:
-    ///   - [0..31] y
+    ///   - [0..31] b
     /// Field 2:
     ///   - [ 0.. 7] rounded_radius
     ///   - [ 8..15] collision_group
@@ -48,17 +48,17 @@ pub struct CommonObject {
     ///
     /// Theta is placed at the top of that field so that values can be added to
     /// it without corrupting other data when it wraps around.
-    pub a: i32x4,
+    pub p: i32x4,
     /// Dynamics information.
     ///
     /// Field 0:
-    ///   - [ 0.. 7] fx
-    ///   - [ 8..15] ax
-    ///   - [16..31] vx
+    ///   - [ 0.. 7] fa
+    ///   - [ 8..15] aa
+    ///   - [16..31] va
     /// Field 1:
-    ///   - [ 0.. 7] fy
-    ///   - [ 8..15] ay
-    ///   - [16..31] vy
+    ///   - [ 0.. 7] fb
+    ///   - [ 8..15] ab
+    ///   - [16..31] vb
     /// Field 2:
     ///   - [ 0.. 7] ftheta
     ///   - [ 8..15] atheta
@@ -69,7 +69,7 @@ pub struct CommonObject {
     ///   - [16..23] wakeup_counter
     ///   - [24..31] id_hi
     ///
-    /// X and Y velocity are aligned so that they can be bit-shifted 16 bits
+    /// A and B velocity are aligned so that they can be bit-shifted 16 bits
     /// right and then added to the `a` field. All velocities are in the high
     /// half so that the whole `b` field can be bit-shifted around to
     /// sign-extend acceleration and then added to itself to update the
@@ -80,7 +80,7 @@ pub struct CommonObject {
     /// Note that this means that the `id` field is awkwardly split in two, and
     /// that `id_hi` gets corrupted when `wakeup_counter` wraps around, which
     /// must be fixed manually.
-    pub b: i32x4,
+    pub d: i32x4,
 }
 
 /// A representation of `CommonObject` as a normal struct. Use of this is to be
@@ -88,14 +88,14 @@ pub struct CommonObject {
 /// is unimportant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnpackedCommonObject {
-    /// The X coordinate plus `rounded_radius * ROUNDED_RADIUS_FACTOR`.
-    pub biased_x: i32,
-    /// The Y coordinate.
-    pub y: i32,
+    /// The A coordinate plus `rounded_radius * ROUNDED_RADIUS_FACTOR`.
+    pub biased_a: i32,
+    /// The B coordinate.
+    pub b: i32,
     /// The rotation.
     pub theta: Angle,
     /// The collision radius of the object (i.e., the maximum distance of any
-    /// collideable point from the nominal (X,Y) coordinate), divided by
+    /// collideable point from the nominal (A,B) coordinate), divided by
     /// ROUNDED_RADIUS_FACTOR, rounded up.
     pub rounded_radius: u8,
     /// No two objects with the same non-zero collision group will collide with
@@ -111,23 +111,23 @@ pub struct UnpackedCommonObject {
     /// representation of the length part of the DST pointer. Otherwise, extra
     /// type-specific data.
     pub data_dst_size: u8,
-    /// The X velocity.
-    pub vx: i16,
-    /// The X friction, i.e., what fraction of X velocity is preserved every
+    /// The A velocity.
+    pub va: i16,
+    /// The A friction, i.e., what fraction of A velocity is preserved every
     /// `FRICTION_TICKS` ticks. 128 means no velocity is lost; 0 means 50% of
     /// velocity is lost.
-    pub fx: u8,
-    /// The X acceleration (delta `vx` per frame).
-    pub ax: i8,
-    /// The Y velocity.
-    pub vy: i16,
-    /// The Y friction, as with `fx`.
-    pub fy: u8,
-    /// The Y acceleration.
-    pub ay: i8,
+    pub fa: u8,
+    /// The A acceleration (delta `va` per frame).
+    pub aa: i8,
+    /// The B velocity.
+    pub vb: i16,
+    /// The B friction, as with `fa`.
+    pub fb: u8,
+    /// The B acceleration.
+    pub ab: i8,
     /// The theta velocity times 4.
     pub vtheta_x4: i16,
-    /// The theta friction, as with `fx`.
+    /// The theta friction, as with `fa`.
     pub ftheta: u8,
     /// The theta acceleration, i.e., delta `vtheta_x4` per frame.
     pub atheta: i8,
@@ -182,53 +182,53 @@ macro_rules! common_field {
 }
 
 impl CommonObject {
-    common_field!(a:0[ 0..31]: i32 biased_x, set_biased_x, with_biased_x);
-    common_field!(a:1[ 0..31]: i32 y, set_y, with_y);
-    common_field!(a:2[ 0.. 7]: u8 rounded_radius, set_rounded_radius,
+    common_field!(p:0[ 0..31]: i32 biased_a, set_biased_a, with_biased_a);
+    common_field!(p:1[ 0..31]: i32 b, set_b, with_b);
+    common_field!(p:2[ 0.. 7]: u8 rounded_radius, set_rounded_radius,
                   with_rounded_radius);
-    common_field!(a:2[ 8..15]: u8 collision_group, set_collision_group,
+    common_field!(p:2[ 8..15]: u8 collision_group, set_collision_group,
                   with_collision_group);
-    common_field!(a:2[16..31]: Angle theta, set_theta, with_theta,
+    common_field!(p:2[16..31]: Angle theta, set_theta, with_theta,
                   Wrapping(theta as i16), theta.0 as i32);
-    common_field!(a:3[ 0.. 7]: u8 object_type, set_object_type,
+    common_field!(p:3[ 0.. 7]: u8 object_type, set_object_type,
                   with_object_type);
-    common_field!(a:3[ 8..23]: u16 extended_data, set_extended_data,
+    common_field!(p:3[ 8..23]: u16 extended_data, set_extended_data,
                   with_extended_data);
-    common_field!(a:3[24..31]: u8 data_dst_size, set_data_dst_size,
+    common_field!(p:3[24..31]: u8 data_dst_size, set_data_dst_size,
                   with_data_dst_size);
 
-    common_field!(b:0[ 0.. 7]:  u8 fx, set_fx, with_fx);
-    common_field!(b:0[ 8..15]:  i8 ax, set_ax, with_ax);
-    common_field!(b:0[16..31]: i16 vx, set_vx, with_vx);
-    common_field!(b:1[ 0.. 7]:  u8 fy, set_fy, with_fy);
-    common_field!(b:1[ 8..15]:  i8 ay, set_ay, with_ay);
-    common_field!(b:1[16..31]: i16 vy, set_vy, with_vy);
-    common_field!(b:2[ 0.. 7]:  u8 ftheta, set_ftheta, with_ftheta);
-    common_field!(b:2[ 8..15]:  i8 atheta, set_atheta, with_atheta);
-    common_field!(b:2[16..31]: i16 vtheta_x4, set_vtheta_x4, with_vtheta_x4);
-    common_field!(b:3[ 0.. 7]:  u8 id_lo, set_id_lo, with_id_lo);
-    common_field!(b:3[ 8..15]:  u8 wakeup_increment, set_wakeup_increment,
+    common_field!(d:0[ 0.. 7]:  u8 fa, set_fa, with_fa);
+    common_field!(d:0[ 8..15]:  i8 aa, set_aa, with_aa);
+    common_field!(d:0[16..31]: i16 va, set_va, with_va);
+    common_field!(d:1[ 0.. 7]:  u8 fb, set_fb, with_fb);
+    common_field!(d:1[ 8..15]:  i8 ab, set_ab, with_ab);
+    common_field!(d:1[16..31]: i16 vb, set_vb, with_vb);
+    common_field!(d:2[ 0.. 7]:  u8 ftheta, set_ftheta, with_ftheta);
+    common_field!(d:2[ 8..15]:  i8 atheta, set_atheta, with_atheta);
+    common_field!(d:2[16..31]: i16 vtheta_x4, set_vtheta_x4, with_vtheta_x4);
+    common_field!(d:3[ 0.. 7]:  u8 id_lo, set_id_lo, with_id_lo);
+    common_field!(d:3[ 8..15]:  u8 wakeup_increment, set_wakeup_increment,
                   with_wakeup_increment);
-    common_field!(b:3[16..23]:  u8 wakeup_counter, set_wakeup_counter,
+    common_field!(d:3[16..23]:  u8 wakeup_counter, set_wakeup_counter,
                   with_wakeup_counter);
-    common_field!(b:3[24..31]:  u8 id_hi, set_id_hi, with_id_hi);
+    common_field!(d:3[24..31]:  u8 id_hi, set_id_hi, with_id_hi);
 
     pub fn unpack(self) -> UnpackedCommonObject {
         UnpackedCommonObject {
-            biased_x: self.biased_x(),
-            y: self.y(),
+            biased_a: self.biased_a(),
+            b: self.b(),
             rounded_radius: self.rounded_radius(),
             collision_group: self.collision_group(),
             theta: self.theta(),
             object_type: self.object_type(),
             extended_data: self.extended_data(),
             data_dst_size: self.data_dst_size(),
-            fx: self.fx(),
-            ax: self.ax(),
-            vx: self.vx(),
-            fy: self.fy(),
-            ay: self.ay(),
-            vy: self.vy(),
+            fa: self.fa(),
+            aa: self.aa(),
+            va: self.va(),
+            fb: self.fb(),
+            ab: self.ab(),
+            vb: self.vb(),
             vtheta_x4: self.vtheta_x4(),
             atheta: self.atheta(),
             ftheta: self.ftheta(),
@@ -243,23 +243,23 @@ impl UnpackedCommonObject {
     #[inline]
     pub fn pack(self) -> CommonObject {
         CommonObject {
-            a: i32x4::splat(0),
-            b: i32x4::splat(0),
+            p: i32x4::splat(0),
+            d: i32x4::splat(0),
         }
-            .with_biased_x(self.biased_x)
-            .with_y(self.y)
+            .with_biased_a(self.biased_a)
+            .with_b(self.b)
             .with_rounded_radius(self.rounded_radius)
             .with_collision_group(self.collision_group)
             .with_theta(self.theta)
             .with_object_type(self.object_type)
             .with_extended_data(self.extended_data)
             .with_data_dst_size(self.data_dst_size)
-            .with_fx(self.fx)
-            .with_ax(self.ax)
-            .with_vx(self.vx)
-            .with_fy(self.fy)
-            .with_ay(self.ay)
-            .with_vy(self.vy)
+            .with_fa(self.fa)
+            .with_aa(self.aa)
+            .with_va(self.va)
+            .with_fb(self.fb)
+            .with_ab(self.ab)
+            .with_vb(self.vb)
             .with_ftheta(self.ftheta)
             .with_atheta(self.atheta)
             .with_vtheta_x4(self.vtheta_x4)
@@ -294,20 +294,20 @@ mod test {
         const ID_BOUNDARIES:  &[u16] = &[0, 128, 255, 256, u16::MAX];
 
         // Brute-force test of all boundary values
-        for &biased_x in I32_BOUNDARIES {
-        for &y in I32_BOUNDARIES {
+        for &biased_a in I32_BOUNDARIES {
+        for &b in I32_BOUNDARIES {
         for theta in I16_BOUNDARIES.iter().map(|&t| Wrapping(t)) {
         for &rounded_radius in U8_BOUNDARIES {
         for &collision_group in U8_BOUNDARIES {
         for &object_type in U8_BOUNDARIES {
         for &extended_data in U16_BOUNDARIES {
         for &data_dst_size in U8_BOUNDARIES {
-        for &vx in I16_BOUNDARIES {
-        for &fx in U8_BOUNDARIES {
-        for &ax in I8_BOUNDARIES {
-        for &vy in I16_BOUNDARIES {
-        for &fy in U8_BOUNDARIES {
-        for &ay in I8_BOUNDARIES {
+        for &va in I16_BOUNDARIES {
+        for &fa in U8_BOUNDARIES {
+        for &aa in I8_BOUNDARIES {
+        for &vb in I16_BOUNDARIES {
+        for &fb in U8_BOUNDARIES {
+        for &ab in I8_BOUNDARIES {
         for &vtheta_x4 in I16_BOUNDARIES {
         for &ftheta in U8_BOUNDARIES {
         for &atheta in I8_BOUNDARIES {
@@ -315,10 +315,10 @@ mod test {
         for &wakeup_increment in U8_BOUNDARIES {
         for &id in ID_BOUNDARIES {
             let orig = UnpackedCommonObject {
-                biased_x, y, theta, rounded_radius,
+                biased_a, b, theta, rounded_radius,
                 collision_group, object_type, extended_data,
                 data_dst_size,
-                vx, fx, ax, vy, fy, ay, vtheta_x4, ftheta, atheta,
+                va, fa, aa, vb, fb, ab, vtheta_x4, ftheta, atheta,
                 wakeup_counter, wakeup_increment, id,
             };
             let packed = orig.pack();
