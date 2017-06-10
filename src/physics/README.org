@@ -55,13 +55,6 @@ conveniently normalised to (pi,-pi] radians (which was a big pain to do in
 Abendstern). Since the coordinate system is left-handed, positive angle is
 clockwise.
 
-Rotational velocity cannot be expressed simply as delta rotation per tick, as
-this would yield a velocity quantisation of 100 units per second, or about 0.5
-degrees/second. Instead, it is counted in fourths of a unit per tick, with
-fractional values handled by rounding up or down on different frames. We only
-need 16 bits for rotational velocity, as this gives a maximum rotational
-velocity of 8192 units/tick = 819200 units/sec = 12 full rotations/sec.
-
 One obvious thing about objects in space is that a few behaviours are common to
 everything, and many objects have _only_ these behaviours in the absence of
 interactions with other objects:

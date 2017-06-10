@@ -36,9 +36,9 @@ pub struct CommonObject {
     /// Position, collision, and identity data.
     ///
     /// Field 0:
-    ///   - [0..31] biased_a
+    ///   - [ 0..31] biased_a
     /// Field 1:
-    ///   - [0..31] b
+    ///   - [ 0..31] b
     /// Field 2:
     ///   - [ 0.. 7] rounded_radius
     ///   - [ 8..15] collision_group
@@ -55,16 +55,16 @@ pub struct CommonObject {
     ///
     /// Field 0:
     ///   - [ 0.. 7] fa
-    ///   - [ 8..15] aa
-    ///   - [16..31] va
+    ///   - [ 8..15] aax16
+    ///   - [16..31] vax4
     /// Field 1:
     ///   - [ 0.. 7] fb
-    ///   - [ 8..15] ab
-    ///   - [16..31] vb
+    ///   - [ 8..15] abx16
+    ///   - [16..31] vbx4
     /// Field 2:
     ///   - [ 0.. 7] ftheta
-    ///   - [ 8..15] atheta
-    ///   - [16..31] vtheta_x4
+    ///   - [ 8..15] athetax16
+    ///   - [16..31] vthetax4
     /// Field 3:
     ///   - [ 0.. 7] id_lo
     ///   - [ 8..15] counter_increment
@@ -72,10 +72,33 @@ pub struct CommonObject {
     ///   - [24..31] id_hi
     ///
     /// A and B velocity are aligned so that they can be bit-shifted 16 bits
-    /// right and then added to the `a` field. All velocities are in the high
-    /// half so that the whole `b` field can be bit-shifted around to
+    /// right and then added to the position field. All velocities are in the
+    /// high half so that the whole `b` field can be bit-shifted around to
     /// sign-extend acceleration and then added to itself to update the
     /// velocity.
+    ///
+    /// Nominal velocities and accelerations are multiplied by 4 and 16,
+    /// respectively, to give better precision and a more useful range:
+    ///
+    /// | Coordinate            | Internal Unit         | Natural Unit          |
+    /// |=======================|=======================|=======================|
+    /// | Min A velocity / 1    | 1 space/tick          | 3 px/sec              |
+    /// | Max A velocity / 1    | 32768 space/tick      | 50 screens/sec        |
+    /// | Min A accel / 1       | 1 space/tick/tick     | 0.2 screens/sec/sec   |
+    /// | Max A accel / 1       | 128 space/tick/tick   | 19 screens/sec/sec    |
+    /// | Min theta velocity/1  | 1 rot/tick            | 0.5 deg/sec           |
+    /// | Max theta velocity/1  | 32768 rot/tick        | 50 spin/sec           |
+    /// | Min theta accel/1     | 1 rot/tick/tick       | 20 deg/sec/sec        |
+    /// | Max theta accel/1     | 128 rot/tick/tick     | 19.5 spin/sec/sec     |
+    /// |                       |                       |                       |
+    /// | Min A velocity / 4    | 0.25 space/tick       | 0.73 px/sec           |
+    /// | Max A velocity / 4    | 8192 space/tick       | 25 screens/sec        |
+    /// | Min A accel / 16      | 1/16 space/tick/tick  | 18 px/sec/sec         |
+    /// | Max A accel / 16      | 8 space/tick/tick     | 1.2 screens/sec/sec   |
+    /// | Min theta velocity/4  | 0.25 rot/tick         | 0.137 deg/sec         |
+    /// | Max theta velocity/4  | 8192 rot/tick         | 12.5 spins/sec        |
+    /// | Min theta accel / 16  | 1/16 rot/tick/tick    | 3.4 deg/sec/sec       |
+    /// | Max theta accel / 16  | 8 rot/tick/tick       | 439 deg/sec/sec       |
     ///
     /// `counter_increment` and `wakeup_counter` are placed so the counter can
     /// be updated in the same step that updates velocity with acceleration.
@@ -113,33 +136,33 @@ pub struct UnpackedCommonObject {
     /// representation of the length part of the DST pointer. Otherwise, extra
     /// type-specific data.
     pub data_dst_size: u8,
-    /// The A velocity.
-    pub va: i16,
+    /// The A velocity multiplied by 4.
+    pub vax4: i16,
     /// The A friction, i.e., what fraction of A velocity is preserved every
     /// tick. This is implicitly biased by 65281, with a final value of 65536
     /// indicating no velocity is lost, and 0 indicating retaining around 68%
     /// of velocity per second.
     pub fa: u8,
-    /// The A acceleration (delta `va` per frame).
-    pub aa: i8,
-    /// The B velocity.
-    pub vb: i16,
+    /// The A acceleration (delta `va` per frame) multiplied by 16.
+    pub aax16: i8,
+    /// The B velocity multiplied by 4.
+    pub vbx4: i16,
     /// The B friction, as with `fa`.
     pub fb: u8,
-    /// The B acceleration.
-    pub ab: i8,
+    /// The B acceleration multiplied by 16.
+    pub abx16: i8,
     /// The theta velocity times 4.
-    pub vtheta_x4: i16,
+    pub vthetax4: i16,
     /// The theta friction, as with `fa`.
     pub ftheta: u8,
-    /// The theta acceleration, i.e., delta `vtheta_x4` per frame.
-    pub atheta: i8,
+    /// The theta acceleration multiplied by 16.
+    pub athetax16: i8,
     /// Counter of time until this object may either invoke extended behaviour
     /// or interact with the static environment. Note that this counts _up_ to
     /// 0 (by wrapping around from 255).
     pub wakeup_counter: u8,
-    /// Amount by which `wakeup_counter` is incremented each frame. Currently,
-    /// this should always be 1.
+    /// Amount by which `wakeup_counter` is incremented each frame, divided by
+    /// 4. Currently, this should always be 4.
     pub wakeup_increment: u8,
     /// The unique id of this object. This is used by graphics and other
     /// processes to track individual objects. A value of 0 indicates an
@@ -200,15 +223,15 @@ impl CommonObject {
     common_field!(p:3[24..31]: u8 data_dst_size, set_data_dst_size,
                   with_data_dst_size);
 
-    common_field!(d:0[ 0.. 7]:  u8 fa, set_fa, with_fa);
-    common_field!(d:0[ 8..15]:  i8 aa, set_aa, with_aa);
-    common_field!(d:0[16..31]: i16 va, set_va, with_va);
-    common_field!(d:1[ 0.. 7]:  u8 fb, set_fb, with_fb);
-    common_field!(d:1[ 8..15]:  i8 ab, set_ab, with_ab);
-    common_field!(d:1[16..31]: i16 vb, set_vb, with_vb);
-    common_field!(d:2[ 0.. 7]:  u8 ftheta, set_ftheta, with_ftheta);
-    common_field!(d:2[ 8..15]:  i8 atheta, set_atheta, with_atheta);
-    common_field!(d:2[16..31]: i16 vtheta_x4, set_vtheta_x4, with_vtheta_x4);
+    common_field!(d:0[ 0.. 7]:  u8 fa   , set_fa   , with_fa   );
+    common_field!(d:0[ 8..15]:  i8 aax16, set_aax16, with_aax16);
+    common_field!(d:0[16..31]: i16 vax4 , set_vax4 , with_vax4 );
+    common_field!(d:1[ 0.. 7]:  u8 fb   , set_fb   , with_fb   );
+    common_field!(d:1[ 8..15]:  i8 abx16, set_abx16, with_abx16);
+    common_field!(d:1[16..31]: i16 vbx4 , set_vbx4 , with_vbx4 );
+    common_field!(d:2[ 0.. 7]:  u8 ftheta   , set_ftheta   , with_ftheta   );
+    common_field!(d:2[ 8..15]:  i8 athetax16, set_athetax16, with_athetax16);
+    common_field!(d:2[16..31]: i16 vthetax4 , set_vthetax4 , with_vthetax4 );
     common_field!(d:3[ 0.. 7]:  u8 id_lo, set_id_lo, with_id_lo);
     common_field!(d:3[ 8..15]:  u8 wakeup_increment, set_wakeup_increment,
                   with_wakeup_increment);
@@ -227,13 +250,13 @@ impl CommonObject {
             extended_data: self.extended_data(),
             data_dst_size: self.data_dst_size(),
             fa: self.fa(),
-            aa: self.aa(),
-            va: self.va(),
+            aax16: self.aax16(),
+            vax4: self.vax4(),
             fb: self.fb(),
-            ab: self.ab(),
-            vb: self.vb(),
-            vtheta_x4: self.vtheta_x4(),
-            atheta: self.atheta(),
+            abx16: self.abx16(),
+            vbx4: self.vbx4(),
+            vthetax4: self.vthetax4(),
+            athetax16: self.athetax16(),
             ftheta: self.ftheta(),
             wakeup_counter: self.wakeup_counter(),
             wakeup_increment: self.wakeup_increment(),
@@ -249,26 +272,28 @@ impl CommonObject {
         let velocity: i32x4 = self.d >> 16;
         let acceleration: i32x4 = self.d << 16 >> 24;
 
-        let real_velocity =
-            i32x4::new(velocity.extract(0), velocity.extract(1),
-                       (velocity.extract(2) + tick_mod_4) >> 2,
-                       0);
+        let mod_velocity: i32x4 = (velocity + i32x4::splat(tick_mod_4)) >> 2;
+        let real_velocity = i32x4::new(
+            mod_velocity.extract(0), mod_velocity.extract(1),
+            mod_velocity.extract(2) << 16, 0);
+
+        let mod_acceleration: i32x4 =
+            (acceleration + i32x4::splat(tick_mod_4)) >> 2;
+
         let new_pos = self.p + real_velocity;
         // This also increments wakeup_counter
-        let new_velocity = velocity + acceleration;
+        let new_velocity = velocity + mod_acceleration;
+        let friction = (self.d & i32x4::new(255, 255, 255, 0)) +
+            i32x4::new(65281, 65281, 65281, 65536);
+        let new_velocity: i32x4 = new_velocity * friction >> 16;
         // Clamp velocity to legal values.
         let new_velocity = new_velocity
             .max(i32x4::new(-32768, -32768, -32768, i32::MIN))
             .min(i32x4::new(32767, 32767, 32767, i32::MAX));
 
-        let friction = (self.d & i32x4::new(255, 255, 255, 0)) +
-            i32x4::new(65281, 65281, 65281, 65536);
-        let new_acceleration = acceleration * friction >> 16;
-
         let new_dynamics =
             (new_velocity << 16) |
-            ((new_acceleration & i32x4::splat(255)) << 8) |
-            (self.d & i32x4::splat(255));
+            (self.d & i32x4::splat(0xFFFF));
 
         CommonObject { p: new_pos, d: new_dynamics }
     }
@@ -290,14 +315,14 @@ impl UnpackedCommonObject {
             .with_extended_data(self.extended_data)
             .with_data_dst_size(self.data_dst_size)
             .with_fa(self.fa)
-            .with_aa(self.aa)
-            .with_va(self.va)
+            .with_aax16(self.aax16)
+            .with_vax4(self.vax4)
             .with_fb(self.fb)
-            .with_ab(self.ab)
-            .with_vb(self.vb)
+            .with_abx16(self.abx16)
+            .with_vbx4(self.vbx4)
             .with_ftheta(self.ftheta)
-            .with_atheta(self.atheta)
-            .with_vtheta_x4(self.vtheta_x4)
+            .with_athetax16(self.athetax16)
+            .with_vthetax4(self.vthetax4)
             .with_wakeup_counter(self.wakeup_counter)
             .with_wakeup_increment(self.wakeup_increment)
             .with_id_lo(self.id as u8)
@@ -338,15 +363,15 @@ mod test {
         for &object_type in U8_BOUNDARIES {
         for &extended_data in U16_BOUNDARIES {
         for &data_dst_size in U8_BOUNDARIES {
-        for &va in I16_BOUNDARIES {
+        for &vax4 in I16_BOUNDARIES {
         for &fa in U8_BOUNDARIES {
-        for &aa in I8_BOUNDARIES {
-        for &vb in I16_BOUNDARIES {
+        for &aax16 in I8_BOUNDARIES {
+        for &vbx4 in I16_BOUNDARIES {
         for &fb in U8_BOUNDARIES {
-        for &ab in I8_BOUNDARIES {
-        for &vtheta_x4 in I16_BOUNDARIES {
+        for &abx16 in I8_BOUNDARIES {
+        for &vthetax4 in I16_BOUNDARIES {
         for &ftheta in U8_BOUNDARIES {
-        for &atheta in I8_BOUNDARIES {
+        for &athetax16 in I8_BOUNDARIES {
         for &wakeup_counter in U8_BOUNDARIES {
         for &wakeup_increment in U8_BOUNDARIES {
         for &id in ID_BOUNDARIES {
@@ -354,7 +379,7 @@ mod test {
                 biased_a, b, theta, rounded_radius,
                 collision_group, object_type, extended_data,
                 data_dst_size,
-                va, fa, aa, vb, fb, ab, vtheta_x4, ftheta, atheta,
+                vax4, fa, aax16, vbx4, fb, abx16, vthetax4, ftheta, athetax16,
                 wakeup_counter, wakeup_increment, id,
             };
             let packed = orig.pack();
