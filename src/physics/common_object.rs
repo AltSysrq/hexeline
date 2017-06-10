@@ -15,8 +15,10 @@
 
 use std::fmt;
 use std::num::Wrapping;
+use std::i32;
 
 use simd::*;
+use simdext::*;
 
 use physics::Angle;
 
@@ -114,8 +116,9 @@ pub struct UnpackedCommonObject {
     /// The A velocity.
     pub va: i16,
     /// The A friction, i.e., what fraction of A velocity is preserved every
-    /// `FRICTION_TICKS` ticks. 128 means no velocity is lost; 0 means 50% of
-    /// velocity is lost.
+    /// tick. This is implicitly biased by 65281, with a final value of 65536
+    /// indicating no velocity is lost, and 0 indicating retaining around 68%
+    /// of velocity per second.
     pub fa: u8,
     /// The A acceleration (delta `va` per frame).
     pub aa: i8,
@@ -237,6 +240,38 @@ impl CommonObject {
             id: (self.id_lo() as u16) | ((self.id_hi() as u16) << 8),
         }
     }
+
+    /// Advance this object forward one tick, considering only the common data.
+    ///
+    /// `tick_mod_4` is the lower 2 bits of the current tick number, used to
+    /// modulate `vtheta_x4`.
+    pub fn tick(self, tick_mod_4: i32) -> Self {
+        let velocity: i32x4 = self.d >> 16;
+        let acceleration: i32x4 = self.d << 16 >> 24;
+
+        let real_velocity =
+            i32x4::new(velocity.extract(0), velocity.extract(1),
+                       (velocity.extract(2) + tick_mod_4) >> 2,
+                       0);
+        let new_pos = self.p + real_velocity;
+        // This also increments wakeup_counter
+        let new_velocity = velocity + acceleration;
+        // Clamp velocity to legal values.
+        let new_velocity = new_velocity
+            .max(i32x4::new(-32768, -32768, -32768, i32::MIN))
+            .min(i32x4::new(32767, 32767, 32767, i32::MAX));
+
+        let friction = (self.d & i32x4::new(255, 255, 255, 0)) +
+            i32x4::new(65281, 65281, 65281, 65536);
+        let new_acceleration = acceleration * friction >> 16;
+
+        let new_dynamics =
+            (new_velocity << 16) |
+            ((new_acceleration & i32x4::splat(255)) << 8) |
+            (self.d & i32x4::splat(255));
+
+        CommonObject { p: new_pos, d: new_dynamics }
+    }
 }
 
 impl UnpackedCommonObject {
@@ -280,6 +315,7 @@ impl fmt::Debug for CommonObject {
 mod test {
     use std::{i8, u8, i16, u16, i32, u32};
     use std::num::Wrapping;
+    use test::{black_box, Bencher};
 
     use super::*;
 
@@ -325,5 +361,13 @@ mod test {
             let unpacked = packed.unpack();
             assert_eq!(orig, unpacked);
         }}}}}}}}}}}}}}}}}}}}
+    }
+
+    #[bench]
+    fn bench_common_object_tick(b: &mut Bencher) {
+        b.iter(|| black_box(CommonObject {
+            p: i32x4::splat(0),
+            d: i32x4::splat(0),
+        }).tick(black_box(1)));
     }
 }
