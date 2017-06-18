@@ -111,7 +111,7 @@ pub struct CommonObject {
 /// A representation of `CommonObject` as a normal struct. Use of this is to be
 /// avoided except for constructing `CommonObject` and places where performance
 /// is unimportant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct UnpackedCommonObject {
     /// The A coordinate plus `rounded_radius * ROUNDED_RADIUS_FACTOR`.
     pub biased_a: i32,
@@ -159,7 +159,7 @@ pub struct UnpackedCommonObject {
     pub athetax16: i8,
     /// Counter of time until this object may either invoke extended behaviour
     /// or interact with the static environment. Note that this counts _up_ to
-    /// 0 (by wrapping around from 255).
+    /// 255.
     pub wakeup_counter: u8,
     /// Amount by which `wakeup_counter` is incremented each frame, divided by
     /// 4. Currently, this should always be 4.
@@ -239,6 +239,10 @@ impl CommonObject {
                   with_wakeup_counter);
     common_field!(d:3[24..31]:  u8 id_hi, set_id_hi, with_id_hi);
 
+    pub fn id(self) -> u16 {
+        (self.id_lo() as u16) | ((self.id_hi() as u16) << 8)
+    }
+
     pub fn unpack(self) -> UnpackedCommonObject {
         UnpackedCommonObject {
             biased_a: self.biased_a(),
@@ -260,14 +264,14 @@ impl CommonObject {
             ftheta: self.ftheta(),
             wakeup_counter: self.wakeup_counter(),
             wakeup_increment: self.wakeup_increment(),
-            id: (self.id_lo() as u16) | ((self.id_hi() as u16) << 8),
+            id: self.id(),
         }
     }
 
     /// Advance this object forward one tick, considering only the common data.
     ///
     /// `tick_mod_4` is the lower 2 bits of the current tick number, used to
-    /// modulate `vtheta_x4`.
+    /// modulate the `x4` and `x16` fields.
     pub fn tick(self, tick_mod_4: i32) -> Self {
         let velocity: i32x4 = self.d >> 16;
         let acceleration: i32x4 = self.d << 16 >> 24;
@@ -283,13 +287,16 @@ impl CommonObject {
         let new_pos = self.p + real_velocity;
         // This also increments wakeup_counter
         let new_velocity = velocity + mod_acceleration;
+        // Clamp velocity to legal values.
+        //
+        // This needs to happen *before* the friction multiplication to ensure
+        // it does not overflow.
+        let new_velocity = new_velocity
+            .nsw_clamp3(i32x4::new(-32768, -32768, -32768, i32::MIN),
+                        i32x4::new(32767, 32767, 32768, i32::MAX));
         let friction = (self.d & i32x4::new(255, 255, 255, 0)) +
             i32x4::new(65281, 65281, 65281, 65536);
         let new_velocity: i32x4 = new_velocity * friction >> 16;
-        // Clamp velocity to legal values.
-        let new_velocity = new_velocity
-            .max(i32x4::new(-32768, -32768, -32768, i32::MIN))
-            .min(i32x4::new(32767, 32767, 32767, i32::MAX));
 
         let new_dynamics =
             (new_velocity << 16) |
@@ -338,9 +345,13 @@ impl fmt::Debug for CommonObject {
 
 #[cfg(test)]
 mod test {
+    use std::cmp::{max, min};
     use std::{i8, u8, i16, u16, i32, u32};
     use std::num::Wrapping;
     use test::{black_box, Bencher};
+
+    use proptest;
+    use proptest::strategy::Strategy;
 
     use super::*;
 
@@ -386,6 +397,162 @@ mod test {
             let unpacked = packed.unpack();
             assert_eq!(orig, unpacked);
         }}}}}}}}}}}}}}}}}}}}
+    }
+
+    #[test]
+    fn no_vtheta_wraparound() {
+        let start = UnpackedCommonObject {
+            vthetax4: -32740,
+            ftheta: 252,
+            athetax16: -120,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let result = start.tick(0);
+        assert!(result.vthetax4() < 0,
+                "vthetax4 wrapped around: {} => {}",
+                start.vthetax4(), result.vthetax4());
+    }
+
+    #[test]
+    fn id_not_clobbered_by_tick() {
+        let start = UnpackedCommonObject {
+            wakeup_increment: 4,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let result = start.tick(0);
+        assert_eq!(0, result.id());
+    }
+
+    proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            cases: 2048,
+            .. proptest::test_runner::Config::default()
+        })]
+
+        #[test]
+        fn common_object_tick(
+            biased_a in -0x10000000i32..0x10000000,
+            b in -0x10000000i32..0x10000000,
+            theta in proptest::num::i16::ANY.prop_map(Wrapping),
+            rounded_radius in proptest::num::u8::ANY,
+            collision_group in proptest::num::u8::ANY,
+            object_type in proptest::num::u8::ANY,
+            extended_data in proptest::num::u16::ANY,
+            data_dst_size in proptest::num::u8::ANY,
+            vax4 in proptest::num::i16::ANY,
+            fa in proptest::num::u8::ANY,
+            aax16 in proptest::num::i8::ANY,
+            vbx4 in proptest::num::i16::ANY,
+            fb in proptest::num::u8::ANY,
+            abx16 in proptest::num::i8::ANY,
+            vthetax4 in proptest::num::i16::ANY,
+            ftheta in proptest::num::u8::ANY,
+            athetax16 in proptest::num::i8::ANY,
+            wakeup_counter in 0u8..255u8, // Can't wrap around
+            id in proptest::num::u16::ANY,
+            tick_mod_4 in 0i32..4i32
+        ) {
+            let start = UnpackedCommonObject {
+                biased_a, b, theta, rounded_radius, collision_group,
+                object_type, extended_data, data_dst_size,
+                vax4, fa, aax16, vbx4, fb, abx16, vthetax4, ftheta,
+                athetax16, wakeup_counter, id,
+                wakeup_increment: 4,
+            }.pack();
+            let result = start.tick(tick_mod_4);
+
+            // Constant properties don't change
+            assert_eq!(rounded_radius, result.rounded_radius());
+            assert_eq!(collision_group, result.collision_group());
+            assert_eq!(object_type, result.object_type());
+            assert_eq!(extended_data, result.extended_data());
+            assert_eq!(data_dst_size, result.data_dst_size());
+            assert_eq!(fa, result.fa());
+            assert_eq!(aax16, result.aax16());
+            assert_eq!(fb, result.fb());
+            assert_eq!(abx16, result.abx16());
+            assert_eq!(ftheta, result.ftheta());
+            assert_eq!(athetax16, result.athetax16());
+            assert_eq!(id, result.id());
+            assert_eq!(4, result.wakeup_increment());
+
+            // Position adjusted by velocity or velocity + 1
+            // Note that we need to use >>2 and not /4 because they give
+            // different results for negative values (-15841>>2 = -3961,
+            // -15841/4 = -3960).
+            assert!(biased_a + (vax4 as i32 >> 2) == result.biased_a() ||
+                    biased_a + (vax4 as i32 >> 2) + 1 == result.biased_a(),
+                    "biased_a ({}) + vax4 ({}) -> {}",
+                    biased_a, vax4, result.biased_a());
+            assert!(b + (vbx4 as i32 >> 2) == result.b() ||
+                    b + (vbx4 as i32 >> 2) + 1 == result.b(),
+                    "b ({}) + vbx4 ({}) -> {}",
+                    b, vbx4, result.b());
+            assert!(theta + Wrapping(vthetax4 as i16 >> 2) == result.theta() ||
+                    theta + Wrapping(vthetax4 as i16 >> 2) +
+                    Wrapping(1) == result.theta(),
+                    "theta ({}) + vthetax4 ({}) -> {}",
+                    theta, vthetax4, result.theta());
+
+            // The interaction between acceleration and friction on velocity is
+            // hard to test at the same time; they are tested in separate
+            // tests. But do test that we didn't see any wrap-around of any of
+            // the velocities.
+            assert!((vax4 as i32 - result.vax4() as i32).abs() < 16384,
+                    "Velocity wrap-around for A: {} => {}",
+                    vax4, result.vax4());
+            assert!((vbx4 as i32 - result.vbx4() as i32).abs() < 16384,
+                    "Velocity wrap-around for B: {} => {}",
+                    vbx4, result.vbx4());
+            assert!((vthetax4 as i32 - result.vthetax4() as i32).abs() < 16384,
+                    "Velocity wrap-around for theta: {} => {}",
+                    vthetax4, result.vthetax4());
+
+            assert_eq!(wakeup_counter + 1, result.wakeup_counter());
+
+            // Test friction
+            let no_accel_start = start
+                .with_aax16(0)
+                .with_abx16(0)
+                .with_athetax16(0);
+            let no_accel_result = no_accel_start.tick(tick_mod_4);
+            macro_rules! check_friction {
+                ($v:ident, $f:ident) => {
+                    if 255 == $f {
+                        assert_eq!($v, no_accel_result.$v());
+                    } else {
+                        assert!((no_accel_result.$v() as i32).abs() <=
+                                ($v as i32).abs() &&
+                                (no_accel_result.$v() as i32).abs() >=
+                                ($v as i32).abs()/2,
+                                "{} ({}) * friction ({}) -> {}",
+                                stringify!($v), $v, $f, no_accel_result.$v());
+                    }
+                }
+            };
+            check_friction!(vax4, fa);
+            check_friction!(vbx4, fb);
+            check_friction!(vthetax4, ftheta);
+
+            // Test acceleration
+            let no_friction_start = start
+                .with_fa(255)
+                .with_fb(255)
+                .with_ftheta(255);
+            let no_friction_result = no_friction_start.tick(tick_mod_4);
+            macro_rules! check_accel {
+                ($v:ident, $a:ident) => {
+                    let new_v = max(-32768, min(32767, $v as i32 + ($a as i32 >>2)));
+                    assert!(no_friction_result.$v() as i32 == new_v ||
+                            no_friction_result.$v() as i32 == new_v + 1,
+                            "{} ({}) + {} -> {}",
+                            stringify!($v), $v, $a, no_friction_result.$v());
+                }
+            };
+            check_accel!(vax4, aax16);
+            check_accel!(vbx4, abx16);
+            check_accel!(vthetax4, athetax16);
+        }
     }
 
     #[bench]

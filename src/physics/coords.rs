@@ -540,8 +540,8 @@ impl Vhs {
         // i32x4::neg expands to a function call, so subtract from 0 instead.
         let c_residue = i32x4::splat(0) - a_residue - b_residue;
 
-        let max_residue = a_residue.max(b_residue).max(c_residue);
-        let min_residue = a_residue.min(b_residue).min(c_residue);
+        let max_residue = a_residue.nsw_max(b_residue).nsw_max(c_residue);
+        let min_residue = a_residue.nsw_min(b_residue).nsw_min(c_residue);
         // We can't use .le() because it gets turned into a function call even with
         // SSE4.1. We can accomplish (a <= b) with ((a - b - 1) >> 31) though
         // (which also gets us a convenient bitmask). Though here we only care

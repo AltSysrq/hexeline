@@ -24,6 +24,8 @@ extern crate sdl2;
 extern crate simd;
 extern crate test;
 
+#[cfg(test)] #[macro_use] extern crate proptest;
+
 use std::io;
 use std::io::Write;
 use gl::types::*;

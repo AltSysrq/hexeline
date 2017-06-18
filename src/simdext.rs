@@ -22,10 +22,17 @@ pub trait SimdExt {
     type Lane;
     type ULane;
 
-    /// Return a SIMD value containing the maximum value of each lane.
-    fn max(self, that: Self) -> Self;
-    /// Return a SIMD value containing the minimum value of each lane.
-    fn min(self, that: Self) -> Self;
+    /// Return a SIMD value containing the maximum value of each lane, assuming
+    /// that subtracting corresponding lanes never overflows.
+    fn nsw_max(self, that: Self) -> Self;
+    /// Return a SIMD value containing the minimum value of each lane, assuming
+    /// that subtracting corresponding lanes never overflows.
+    fn nsw_min(self, that: Self) -> Self;
+    /// Clamp the first 3 lanes of this value to be between lower and upper
+    /// (both inclusive), and leave the final lane alone. The final lane must
+    /// have the minimum value for the type in `lower` and the maximum value
+    /// for the type in `upper`.
+    fn nsw_clamp3(self, lower: Self, upper: Self) -> Self;
     /// Return an n-bit value (starting with bit 0) containing the sign bit of
     /// each lane in this SIMD value.
     fn movemask(self) -> u32;
@@ -88,13 +95,18 @@ impl SimdExt for i32x4 {
     type ULane = u32;
 
     #[inline(always)]
-    fn max(self, that: i32x4) -> i32x4 {
-        i32x4_max(self, that)
+    fn nsw_max(self, that: i32x4) -> i32x4 {
+        i32x4_nsw_max(self, that)
     }
 
     #[inline(always)]
-    fn min(self, that: i32x4) -> i32x4 {
-        i32x4_min(self, that)
+    fn nsw_min(self, that: i32x4) -> i32x4 {
+        i32x4_nsw_min(self, that)
+    }
+
+    #[inline(always)]
+    fn nsw_clamp3(self, lower: i32x4, upper: i32x4) -> i32x4 {
+        i32x4_nsw_clamp3(self, lower, upper)
     }
 
     #[inline(always)]
@@ -193,28 +205,42 @@ impl SimdExt4 for i32x4 {
 
 #[cfg(target_feature = "sse4.1")]
 #[inline(always)]
-fn i32x4_max(a: i32x4, b: i32x4) -> i32x4 {
+fn i32x4_nsw_max(a: i32x4, b: i32x4) -> i32x4 {
     use simd::x86::sse4_1::Sse41I32x4;
     Sse41I32x4::max(a, b)
 }
 
 #[cfg(target_feature = "sse4.1")]
 #[inline(always)]
-fn i32x4_min(a: i32x4, b: i32x4) -> i32x4 {
+fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
     use simd::x86::sse4_1::Sse41I32x4;
     Sse41I32x4::min(a, b)
 }
 
+#[cfg(target_feature = "sse4.1")]
+#[inline(always)]
+fn i32x4_nsw_clamp3(a: i32x4, lower: i32x4, upper: i32x4) -> i32x4 {
+    a.nsw_max(lower).nsw_min(upper)
+}
+
 #[cfg(not(target_feature = "sse4.1"))]
 #[inline(always)]
-fn i32x4_max(a: i32x4, b: i32x4) -> i32x4 {
+fn i32x4_nsw_max(a: i32x4, b: i32x4) -> i32x4 {
     bool32ix4::from_repr((a - b) >> 31).select(b, a)
 }
 
 #[cfg(not(target_feature = "sse4.1"))]
 #[inline(always)]
-fn i32x4_min(a: i32x4, b: i32x4) -> i32x4 {
+fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
     bool32ix4::from_repr((a - b) >> 31).select(a, b)
+}
+
+#[cfg(not(target_feature = "sse4.1"))]
+#[inline(always)]
+fn i32x4_nsw_clamp3(a: i32x4, lower: i32x4, upper: i32x4) -> i32x4 {
+    let clamp3 = a.nsw_max(lower).nsw_min(upper);
+    i32x4::new(clamp3.extract(0), clamp3.extract(1), clamp3.extract(2),
+               a.extract(3))
 }
 
 #[cfg(target_feature = "sse")]
@@ -264,7 +290,7 @@ mod test {
     fn test_i32x4_max() {
         let a = i32x4::new(0, 1, -1, -2);
         let b = i32x4::new(0, 0, 0, -1);
-        let v = a.max(b);
+        let v = a.nsw_max(b);
 
         assert_eq!(0, v.extract(0));
         assert_eq!(1, v.extract(1));
@@ -276,7 +302,7 @@ mod test {
     fn test_i32x4_min() {
         let a = i32x4::new(0, 1, -1, -2);
         let b = i32x4::new(0, 0, 0, -1);
-        let v = a.min(b);
+        let v = a.nsw_min(b);
 
         assert_eq!(0, v.extract(0));
         assert_eq!(0, v.extract(1));
