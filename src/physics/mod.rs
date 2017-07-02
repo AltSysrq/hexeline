@@ -13,6 +13,8 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+#[macro_use] mod packed_struct;
+
 mod units;
 pub use self::units::*;
 mod common_object;
@@ -20,3 +22,4 @@ pub use self::common_object::*;
 pub mod coords;
 pub mod xform;
 pub mod arena;
+pub mod composite;

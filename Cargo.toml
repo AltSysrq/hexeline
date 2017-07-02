@@ -10,6 +10,7 @@ gl = "0.6.2"
 png = "0.7.0"
 sdl2 = "0.30.0"
 simd = "0.2.0"
+smallvec = "0.4.1"
 
 [dev-dependencies]
 proptest = "0.1.0"

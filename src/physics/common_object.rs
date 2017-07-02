@@ -171,73 +171,37 @@ pub struct UnpackedCommonObject {
     pub id: u16,
 }
 
-macro_rules! common_field {
-    ($part:ident:$word:tt[$lo:tt..$hi:tt]: $typ:tt
-     $name:ident, $setter:ident, $wither:ident) => {
-        common_field!($part:$word[$lo..$hi]: $typ
-                      $name, $setter, $wither,
-                      $name as $typ,
-                      $name as u32 as i32);
-    };
-
-    ($part:ident:$word:tt[$lo:tt..$hi:tt]: $typ:tt
-     $name:ident, $setter:ident, $wither:ident,
-     $from_i32:expr, $to_i32:expr) => {
-        #[inline]
-        pub fn $name(self) -> $typ {
-            let $name = self.$part.extract($word) >> $lo;
-            $from_i32
-        }
-
-        #[inline]
-        pub fn $setter(&mut self, $name: $typ) {
-            let v: i32 = $to_i32;
-            let mask = (((1i64 << ($hi+1)) - 1) ^ ((1i64 << $lo) - 1)) as i32;
-            let mut word = self.$part.extract($word);
-            word &= !mask;
-            word |= (v << $lo) & mask;
-            self.$part = self.$part.replace($word, word);
-        }
-
-        #[inline]
-        pub fn $wither(mut self, $name: $typ) -> Self {
-            self.$setter($name);
-            self
-        }
-    };
-}
-
 impl CommonObject {
-    common_field!(p:0[ 0..31]: i32 biased_a, set_biased_a, with_biased_a);
-    common_field!(p:1[ 0..31]: i32 b, set_b, with_b);
-    common_field!(p:2[ 0.. 7]: u8 rounded_radius, set_rounded_radius,
+    packed_field!(p:0[ 0..31]: i32 biased_a, set_biased_a, with_biased_a);
+    packed_field!(p:1[ 0..31]: i32 b, set_b, with_b);
+    packed_field!(p:2[ 0.. 7]: u8 rounded_radius, set_rounded_radius,
                   with_rounded_radius);
-    common_field!(p:2[ 8..15]: u8 collision_group, set_collision_group,
+    packed_field!(p:2[ 8..15]: u8 collision_group, set_collision_group,
                   with_collision_group);
-    common_field!(p:2[16..31]: Angle theta, set_theta, with_theta,
+    packed_field!(p:2[16..31]: Angle theta, set_theta, with_theta,
                   Wrapping(theta as i16), theta.0 as i32);
-    common_field!(p:3[ 0.. 7]: u8 object_type, set_object_type,
+    packed_field!(p:3[ 0.. 7]: u8 object_type, set_object_type,
                   with_object_type);
-    common_field!(p:3[ 8..23]: u16 extended_data, set_extended_data,
+    packed_field!(p:3[ 8..23]: u16 extended_data, set_extended_data,
                   with_extended_data);
-    common_field!(p:3[24..31]: u8 data_dst_size, set_data_dst_size,
+    packed_field!(p:3[24..31]: u8 data_dst_size, set_data_dst_size,
                   with_data_dst_size);
 
-    common_field!(d:0[ 0.. 7]:  u8 fa   , set_fa   , with_fa   );
-    common_field!(d:0[ 8..15]:  i8 aax16, set_aax16, with_aax16);
-    common_field!(d:0[16..31]: i16 vax4 , set_vax4 , with_vax4 );
-    common_field!(d:1[ 0.. 7]:  u8 fb   , set_fb   , with_fb   );
-    common_field!(d:1[ 8..15]:  i8 abx16, set_abx16, with_abx16);
-    common_field!(d:1[16..31]: i16 vbx4 , set_vbx4 , with_vbx4 );
-    common_field!(d:2[ 0.. 7]:  u8 ftheta   , set_ftheta   , with_ftheta   );
-    common_field!(d:2[ 8..15]:  i8 athetax16, set_athetax16, with_athetax16);
-    common_field!(d:2[16..31]: i16 vthetax4 , set_vthetax4 , with_vthetax4 );
-    common_field!(d:3[ 0.. 7]:  u8 id_lo, set_id_lo, with_id_lo);
-    common_field!(d:3[ 8..15]:  u8 wakeup_increment, set_wakeup_increment,
+    packed_field!(d:0[ 0.. 7]:  u8 fa   , set_fa   , with_fa   );
+    packed_field!(d:0[ 8..15]:  i8 aax16, set_aax16, with_aax16);
+    packed_field!(d:0[16..31]: i16 vax4 , set_vax4 , with_vax4 );
+    packed_field!(d:1[ 0.. 7]:  u8 fb   , set_fb   , with_fb   );
+    packed_field!(d:1[ 8..15]:  i8 abx16, set_abx16, with_abx16);
+    packed_field!(d:1[16..31]: i16 vbx4 , set_vbx4 , with_vbx4 );
+    packed_field!(d:2[ 0.. 7]:  u8 ftheta   , set_ftheta   , with_ftheta   );
+    packed_field!(d:2[ 8..15]:  i8 athetax16, set_athetax16, with_athetax16);
+    packed_field!(d:2[16..31]: i16 vthetax4 , set_vthetax4 , with_vthetax4 );
+    packed_field!(d:3[ 0.. 7]:  u8 id_lo, set_id_lo, with_id_lo);
+    packed_field!(d:3[ 8..15]:  u8 wakeup_increment, set_wakeup_increment,
                   with_wakeup_increment);
-    common_field!(d:3[16..23]:  u8 wakeup_counter, set_wakeup_counter,
+    packed_field!(d:3[16..23]:  u8 wakeup_counter, set_wakeup_counter,
                   with_wakeup_counter);
-    common_field!(d:3[24..31]:  u8 id_hi, set_id_hi, with_id_hi);
+    packed_field!(d:3[24..31]:  u8 id_hi, set_id_hi, with_id_hi);
 
     pub fn id(self) -> u16 {
         (self.id_lo() as u16) | ((self.id_hi() as u16) << 8)
