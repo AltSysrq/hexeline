@@ -257,7 +257,7 @@ impl CommonObject {
         // it does not overflow.
         let new_velocity = new_velocity
             .nsw_clamp3(i32x4::new(-32768, -32768, -32768, i32::MIN),
-                        i32x4::new(32767, 32767, 32768, i32::MAX));
+                        i32x4::new(32767, 32767, 32767, i32::MAX));
         let friction = (self.d & i32x4::new(255, 255, 255, 0)) +
             i32x4::new(65281, 65281, 65281, 65536);
         let new_velocity: i32x4 = new_velocity * friction >> 16;
@@ -375,6 +375,19 @@ mod test {
         assert!(result.vthetax4() < 0,
                 "vthetax4 wrapped around: {} => {}",
                 start.vthetax4(), result.vthetax4());
+    }
+
+    #[test]
+    fn no_vtheta_wraparound_2() {
+        let start = UnpackedCommonObject {
+            vthetax4: 32738,
+            athetax16: 118,
+            ftheta: 255,
+            wakeup_increment: 4,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let result = start.tick(2);
+        assert_eq!(32767, result.vthetax4());
     }
 
     #[test]
