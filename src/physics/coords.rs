@@ -511,10 +511,8 @@ impl Vos {
 }
 
 impl Vhs {
-    /// Return the (A,B) index of the hexagonal cell containing this
-    /// coordinate.
-    #[inline(never)]
-    pub fn to_index(self) -> (i32, i32) {
+    #[inline(always)]
+    fn to_grid(self) -> (i32x4, i32x4, i32x4) {
         // The core idea here is that we'll be rounding A and B up or down to the
         // nearest integer. They don't necessarily round the same way, so there are
         // 4 options total. C gets rounded similarly, though we consider it in
@@ -542,12 +540,21 @@ impl Vhs {
 
         let max_residue = a_residue.nsw_max(b_residue).nsw_max(c_residue);
         let min_residue = a_residue.nsw_min(b_residue).nsw_min(c_residue);
+        (rounded_a, rounded_b, max_residue - min_residue)
+    }
+
+    /// Return the (A,B) index of the hexagonal cell containing this
+    /// coordinate.
+    #[inline(always)]
+    pub fn to_index(self) -> (i32, i32) {
+        let (_, _, residue) = self.to_grid();
+
         // We can't use .le() because it gets turned into a function call even with
         // SSE4.1. We can accomplish (a <= b) with ((a - b - 1) >> 31) though
         // (which also gets us a convenient bitmask). Though here we only care
         // about the sign bit, so the >> 31 is elided.
-        let valid_mask: i32x4 =
-            (max_residue - min_residue) - i32x4::splat(CELL_COORD_MASK + 2);
+        let valid_mask = residue - i32x4::splat(CELL_COORD_MASK + 2);
+
         // Efficiently get a 4-bit value indicating which lanes of valid_mask have
         // their sign bit set (i.e., are valid solutions).
         let valid_bits = valid_mask.movemask();
@@ -570,6 +577,25 @@ impl Vhs {
 
         let coord = self.repr() >> CONTINUOUS_TO_CELL_SHIFT;
         (coord.extract(0) + a_off, coord.extract(1) + b_off)
+    }
+
+    /// Assuming this point refers to the centre of an axis-aligned hexagon,
+    /// determine which hexagonal grid points overlap with that hexagon.
+    ///
+    /// Returns parallel vectors of A and B coordinates. There will always be 1
+    /// to 4 values set; non-absent values may be found in any of the four
+    /// slots, and are distinguished by having a value of -32768.
+    #[inline(always)]
+    pub fn to_grid_overlap(self) -> (i32x4, i32x4) {
+        let (a, b, residue) = self.to_grid();
+        // Times 4 rather than 2 because we have (max-min) residue, which
+        // reaches twice the radius at the actual radius.
+        let valid_mask = residue - i32x4::splat(4 * CELL_RADIUS);
+        let a: i32x4 = a >> CONTINUOUS_TO_CELL_SHIFT;
+        let b: i32x4 = b >> CONTINUOUS_TO_CELL_SHIFT;
+        let mask = bool32ix4::from_repr(valid_mask >> 31);
+        let absent = i32x4::splat(-32768);
+        (mask.select(a, absent), mask.select(b, absent))
     }
 }
 
@@ -600,6 +626,8 @@ impl Vhd {
 
 #[cfg(test)]
 mod test {
+    use std::cmp::{max, min};
+    use std::collections::HashSet;
     use std::hash::Hasher;
     use test::{Bencher, black_box};
 
@@ -626,6 +654,11 @@ mod test {
     #[bench]
     fn bench_vhs_to_index(b: &mut Bencher) {
         b.iter(|| black_box(Vhs(65536, 65536)).to_index())
+    }
+
+    #[bench]
+    fn bench_vhs_to_grid_overlap(b: &mut Bencher) {
+        b.iter(|| black_box(Vhs(65536, 65536)).to_grid_overlap())
     }
 
     #[test]
@@ -715,5 +748,54 @@ mod test {
         }
 
         assert_eq!(12864379608347279471, hasher.finish());
+    }
+
+    // TODO Need better tests for to_grid_overlap
+    proptest! {
+        #[test]
+        fn vhs_to_grid_overlap(
+            a in (-65536i32..65536i32),
+            b in (-65536i32..65536i32)
+        ) {
+            let (overlap_vec_a, overlap_vec_b) = Vhs(a, b).to_grid_overlap();
+            let mut actual_overlap = HashSet::new();
+            for i in 0..4 {
+                if -32768 == overlap_vec_a.extract(i) { continue; }
+                actual_overlap.insert((overlap_vec_a.extract(i),
+                                       overlap_vec_b.extract(i)));
+            }
+
+            let centre = Vhs(a, b).redundant();
+
+            let mut expected_overlap = HashSet::new();
+            let diam = 1 << CONTINUOUS_TO_CELL_SHIFT;
+            let incr = 16;
+            let mut a_off = -diam;
+            while a_off <= diam {
+                let mut b_off = -diam;
+                while b_off <= diam {
+                    let point = Vhs(a + a_off, b + b_off).redundant();
+                    let off = point - centre;
+                    let residue = max(max(off.a(), off.b()), off.c()) -
+                        min(min(off.a(), off.b()), off.c());
+                    // Be conservative about what cells we sample to avoid edge
+                    // cases
+                    if residue < CELL_RADIUS {
+                        expected_overlap.insert(point.single().to_index());
+                    }
+
+                    b_off += incr;
+                }
+
+                a_off += incr;
+            }
+
+            // We may miss things that should be found since we sampled, but
+            // anything sampling found should always be included in the
+            // results.
+            assert!(expected_overlap.is_subset(&actual_overlap),
+                    "Expected at least {:?}, but only found {:?}",
+                    expected_overlap, actual_overlap);
+        }
     }
 }
