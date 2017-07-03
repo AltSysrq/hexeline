@@ -23,3 +23,4 @@ pub mod coords;
 pub mod xform;
 pub mod arena;
 pub mod composite;
+pub mod hilbert_sort;
