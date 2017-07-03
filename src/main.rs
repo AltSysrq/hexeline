@@ -165,6 +165,7 @@ fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders,
 fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
                mouse_x: i32, mouse_y: i32) {
     use std::cmp::{max, min};
+    use std::collections::HashSet;
     use std::num::Wrapping;
 
     use physics::coords::*;
@@ -172,6 +173,12 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
 
     let mouse_pos = Vos(mouse_x * 65536 / w as i32, mouse_y * 65536 / w as i32)
         .to_vhr();
+    let (mouse_covering_a, mouse_covering_b) =
+        mouse_pos.single().to_grid_overlap();
+    let mouse_covering: HashSet<(i32,i32)> = (0..4).into_iter()
+        .map(|i| (mouse_covering_a.extract(i), mouse_covering_b.extract(i)))
+        .filter(|&(a, _)| -32768 != a)
+        .collect();
 
     let mut data = vec![0u32; w as usize * h as usize];
     for y in 0..h {
@@ -187,6 +194,11 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
                 rg ^= 255;
             }
             if (hexa.b() & physics::coords::CELL_COORD_MASK) <= 32 {
+                b ^= 255;
+            }
+
+            if mouse_covering.contains(&hex) {
+                rg ^= 255;
                 b ^= 255;
             }
 
