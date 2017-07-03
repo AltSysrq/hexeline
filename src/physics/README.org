@@ -332,10 +332,10 @@ upper branches isn't really viable since objects are created and destroyed
 rapidly, constantly shifting everything around. Just sorting more frequently
 could be viable. Re-sorting could actually take place independently of
 rewind/fast-forward since it is not required for physical accuracy, so we could
-re-sort much more frequently in most cases. TODO: Find out how fast this
-sorting is.
+re-sort much more frequently in most cases.
 
 Sorting 10k objects already sorted by transforming 24 bit (A,B) to Hilbert
 values takes 680μs on my AMD64 system, so probably around 3ms on the target
 minimum. If the number of dimensional bits is reduced to 8, this speeds up to
-154μs.
+154μs. My ARM chromebook takes 5ms and 1.6ms, respectively.
+
