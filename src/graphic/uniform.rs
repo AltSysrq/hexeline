@@ -55,6 +55,12 @@ impl UniformFieldType for cg::Matrix4<f32> {
     }
 }
 
+impl UniformFieldType for GLuint {
+    unsafe fn put(&self, ix: GLint) {
+        gl::Uniform1ui(ix, *self);
+    }
+}
+
 pub trait Uniform {
     type Binding : Copy + Debug;
 

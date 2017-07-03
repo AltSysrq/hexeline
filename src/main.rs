@@ -27,8 +27,8 @@ extern crate test;
 
 #[cfg(test)] #[macro_use] extern crate proptest;
 
-use std::io;
-use std::io::Write;
+use std::io::{self, Write};
+
 use gl::types::*;
 
 mod simdext;
@@ -36,9 +36,6 @@ mod graphic;
 mod physics;
 
 fn main() {
-    test_coords();
-    if true { return; }
-
     fn die<T>(message: String) -> T {
         writeln!(&mut io::stderr(), "Failed to initialise SDL: {}", message)
             .unwrap();
@@ -102,8 +99,16 @@ fn main() {
     let shader_programs = graphic::ShaderPrograms::new().unwrap_or_else(die);
     let shaders = graphic::Shaders::new(&shader_programs).unwrap_or_else(die);
 
+    let (sw, sh) = screen.drawable_size();
+    let mut texture = graphic::Texture::new();
+
+    let mut mouse_x = 0;
+    let mut mouse_y = 0;
+    sdl_context.mouse().show_cursor(false);
+
     'main_loop: loop {
-        draw(&projection_matrix, &shaders);
+        test_coords(&mut texture, sw, sh, mouse_x, mouse_y);
+        draw(&projection_matrix, &shaders, &texture, sw, sh);
         screen.gl_swap_window();
 
         for event in sdl_event_pump.poll_iter() {
@@ -113,13 +118,18 @@ fn main() {
                 Event::Quit { .. } => {
                     break 'main_loop;
                 },
+                Event::MouseMotion { x, y, .. } => {
+                    mouse_x = x;
+                    mouse_y = y;
+                },
                 _ => (),
             }
         }
     }
 }
 
-fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders) {
+fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders,
+        texture: &graphic::Texture, sw: u32, sh: u32) {
     use graphic::*;
 
     unsafe {
@@ -127,42 +137,46 @@ fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders) {
     }
 
     let vertices = [
-        vert::Pos2 { v: cg::Vector2 { x: 1280.0 / 2.0, y: 1024.0 / 2.0 } },
-        vert::Pos2 { v: cg::Vector2 { x: 1280.0, y: 1024.0 / 2.0 } },
-        vert::Pos2 { v: cg::Vector2 { x: 1280.0 / 2.0, y: 0.0 } },
+        vert::Pos2Tc2 { v: cg::Vector2 { x: 0.0, y: 0.0 },
+                        tc: cg::Vector2 { x: 0.0, y: 0.0 } },
+        vert::Pos2Tc2 { v: cg::Vector2 { x: sw as f32, y: 0.0 },
+                        tc: cg::Vector2 { x: 1.0, y: 0.0 } },
+        vert::Pos2Tc2 { v: cg::Vector2 { x: 0.0, y: sh as f32 },
+                        tc: cg::Vector2 { x: 0.0, y: 1.0 } },
+        vert::Pos2Tc2 { v: cg::Vector2 { x: sw as f32, y: sh as f32 },
+                        tc: cg::Vector2 { x: 1.0, y: 1.0 } },
     ];
-    let vbo = Vbo::<vert::Pos2>::new(gl::ARRAY_BUFFER).unwrap();
+    let vbo = Vbo::<vert::Pos2Tc2>::new(gl::ARRAY_BUFFER).unwrap();
     let vbo_active = vbo.activate();
     vbo_active.data(&vertices, gl::STREAM_DRAW);
 
-    let vao = Vao::new(&shaders.flat, &vbo_active).unwrap();
-    let uniform = uni::MColour {
+    let vao = Vao::new(&shaders.texture, &vbo_active).unwrap();
+    texture.bind();
+    let uniform = uni::MTex {
         matrix: *matrix,
-        colour: cg::Vector4 { x: 1.0, y: 0.5, z: 0.0, w: 1.0 },
+        tex: 0,
     };
     vao.activate(&uniform);
     unsafe {
-        gl::DrawArrays(gl::TRIANGLES, 0, 3);
+        gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
     }
 }
 
-fn test_coords() {
-    use std::fs;
-    use std::io;
+fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
+               mouse_x: i32, mouse_y: i32) {
+    use std::cmp::{max, min};
     use std::num::Wrapping;
 
     use physics::coords::*;
     use physics::xform::Affine2d;
-    use png::HasParameters;
 
-    const W: usize = 1920;
-    const H: usize = 1080;
-    const SCALE: usize = 65536/W;
+    let mouse_pos = Vos(mouse_x * 65536 / w as i32, mouse_y * 65536 / w as i32)
+        .to_vhr();
 
-    let mut data = vec![0u8;W*H*3];
-    for y in 0..H {
-        for x in 0..W {
-            let cart = Vos((x * SCALE) as i32, (y * SCALE) as i32);
+    let mut data = vec![0u32; w as usize * h as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let cart = Vos((x * 65536 / w) as i32, (y * 65536 / w) as i32);
             let hexa = cart.to_vhr();
             let hex = hexa.single().to_index();
 
@@ -177,16 +191,29 @@ fn test_coords() {
             }
 
             let recart = hexa.dual().to_vod();
-            if recart.x() / (SCALE as i32) & 255 < 16 ||
-                recart.y() / (SCALE as i32) & 255 < 16
+            if recart.x() * w as i32 / 65536 & 255 < 16 ||
+                recart.y() * w as i32 / 65536 & 255 < 16
             {
                 rg = 255;
                 b = 255;
             }
 
-            data[y*W*3 + x*3 + 0] = rg;
-            data[y*W*3 + x*3 + 1] = rg;
-            data[y*W*3 + x*3 + 2] = b;
+            let mut r = rg;
+            let g = rg;
+
+            let mouse_dist = mouse_pos - hexa;
+            let mouse_dist = max(max(mouse_dist.a(), mouse_dist.b()),
+                                 mouse_dist.c()) -
+                min(min(mouse_dist.a(), mouse_dist.b()),
+                    mouse_dist.c());
+            if mouse_dist.abs() <= CELL_RADIUS*2 {
+                r = (Wrapping(r) + Wrapping(128)).0;
+            }
+
+            data[(y * w + x) as usize] = 0xFF000000 +
+                ((r as u32) << 16) +
+                ((g as u32) <<  8) +
+                (b as u32);
         }
     }
 
@@ -194,15 +221,9 @@ fn test_coords() {
     for theta in -32768i32..32768i32 {
         let affine = Affine2d::rotate(Wrapping(theta as i16));
         let xformed = affine * radius;
-        println!("{:?} => {:?} => {:?}",
-                 theta, affine, xformed);
         let px = xformed + Vod(128, 128);
-        data[(px.y()*(W as i32)*3 + px.x()*3) as usize] = 255;
+        data[(px.y()*(w as i32) + px.x()) as usize] |= 0x00FF0000;
     }
 
-    let out = io::BufWriter::new(fs::File::create("hexes.png").unwrap());
-    let mut encoder = png::Encoder::new(out, W as u32, H as u32);
-    encoder.set(png::ColorType::RGB).set(png::BitDepth::Eight);
-
-    encoder.write_header().unwrap().write_image_data(&data).unwrap();
+    tex.blit_argb(&data, w, w, h, false);
 }

@@ -6,7 +6,7 @@ authors = ["Jason Lingle <jason@lin.gl>"]
 [dependencies]
 cgmath = { version = "0.14.1", features = ["use_simd"] }
 fnv = "1.0.5"
-gl = "0.6.2"
+gl = "0.6.3"
 png = "0.7.0"
 sdl2 = "0.30.0"
 simd = "0.2.0"
