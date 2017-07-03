@@ -308,7 +308,7 @@ collide with are strictly larger than them.
   update step is complete.
 
 - No fast "best case"; every object will at least walk the tree enough to find
-  itself, an average of `log2(n)-1`, or 14 tests for 10k objects.
+  itself, an average of `log2(n)-1`, or 13 tests for 10k objects.
 
 - High-speed objects can wreck the quality of the tree.
 
@@ -319,7 +319,7 @@ collide with are strictly larger than them.
 Cache concerns can probably be dealt with by explicit prefetching.
 
 A player using a rapid-fire weapon parallel to the B axis would quickly force
-the sweeping method to do far more than 14 tests per object along that column.
+the sweeping method to do far more than 13 tests per object along that column.
 
 Being able to skip point particles entirely eliminates a branch that the
 sweeping algorithm needs in an inner loop, and also effectively coalesces tree
@@ -339,3 +339,44 @@ values takes 680μs on my AMD64 system, so probably around 3ms on the target
 minimum. If the number of dimensional bits is reduced to 8, this speeds up to
 154μs. My ARM chromebook takes 5ms and 1.6ms, respectively.
 
+** Collision detection option — On-line approximate Hilbert-like tree
+
+The above can be made on-line by checking each object for collisions with those
+that come before it. Since the tree is built in encounter order, checking each
+object for other objects encountered before it is sufficient.
+
+Note that in most cases there are two trees for each object: the one rooted at
+the object, and the one that would be the object's prior sibling once the
+object has a parent.
+
+*** Advantages over off-line algorithm
+
+- It is on-line and so can be performed concurrently to the object update step.
+
+- Average tree depth for each object is 12.3 for 10k objects, vs 14.
+
+- Objects do not need to traverse the tree to ultimately just find themselves;
+  since they start at their own node, the branches are immediately interesting
+  and many objects will not traverse the entire tree.
+
+*** Disadvantages to off-line algorithm
+
+- Every object fully participates in collision detection, resulting in more
+  tree walks.
+
+- Need an extra branch for the point-particle-point-particle case (but which is
+  only relevant if two point particles reach the exact same spot).
+
+*** Considerations
+
+The simplest performance aspect is that the off-line algorithm does better when
+most objects are point particles, whereas the on-line algorithm isn't affected
+as obviously. With 10k objects, the off-line algorithm does on average 13
+comparisons per composite to locate that composite's own node, so if 50% of
+objects are composites, we pay 65000 comparisons. The on-line algorithm, if it
+always descended every level of the tree, would do 123000 comparisons.
+
+However, that doesn't take into account the fact that the off-line algorithm
+_always_ needs to traverse the tree to a particular composite, but the on-line
+algorithm does not. If we assume that on average we only need to down half the
+tree to prune it, we only need around 62000 comparisons.
