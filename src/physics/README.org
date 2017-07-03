@@ -75,9 +75,9 @@ object "sleeping", expressed as a number of ticks until it either needs to do
 something that modifies its extended state or interacts with the static
 environment.
 
-To quicken collision detection, we use the same system Abendstern did, wherein
-we keep the objects (in this case, just the common properties) sorted ascending
-by the rightmost A coordinate of their bounding circle.
+To quicken collision detection, we may use the same system Abendstern did,
+wherein we keep the objects (in this case, just the common properties) sorted
+ascending by the rightmost A coordinate of their bounding circle.
 
 * Common Data Layout
 
@@ -258,3 +258,79 @@ Unlike in Abendstern, objects are not allowed to change their properties
 related to collision detection (including being destroyed or creating new
 objects) in response to colliding with something. Instead, they must store this
 state and apply this effect in the next frame.
+
+** Alternate collision detection option — Approximate Hilbert-like tree
+
+Sorted scanning is still O(n²) with respect to the total number of objects,
+even though it has a much lower constant factor than naïve sweeping. The main
+problem is that we have no way to eliminate candidates which happen to be near
+on one coordinate but very far on another.
+
+The core idea here is to make each object a node in an R-tree in encounter
+order, using implicit conenctions as used with a binary heap in an array. The
+overhead for each object is constant and branchless: retrieve the bounding
+boxes of the children, expand them to include each other and the object itself,
+and write to the tree array.
+
+In order to keep objects encountered near each other actuall near each other,
+the object array is occasionally re-sorted by Hilbert coordinate (say every 100
+frames or so); between sorts, objects are allowed to drift out of order, on the
+assumption that they will still be near each other.
+
+Whereas sweeping needs to check each object against every object already
+processed, tree-based detection would instead test objects against smaller
+objects, only falling back to order as a tie-breaker. This means that point
+particles would not need to be checked at all since the only things they can
+collide with are strictly larger than them.
+
+*** Advantages over sweeping
+
+- No variably-timed sorting step. Simply reads two words, does branch-free
+  operations on them, and writes one word.
+
+- No need to check point particles for collisions, substantially reducing the
+  number of tree walks.
+
+- Objects far apart on the B axis are filtered off from each other.
+
+- The collision detection step can be parallelised.
+
+*** Disadvangates to sweeping
+
+- Adds 16 bytes of memory bandwidth per object which can't be coalesced away.
+
+- Adds 16 bytes of memory per object (160kB for 10k objects) which must contend
+  for the caches.
+
+- Performs random memory accesses as the tree is walked.
+
+- Collision detection step is "off-line" and cannot start until the object
+  update step is complete.
+
+- No fast "best case"; every object will at least walk the tree enough to find
+  itself, an average of `log2(n)-1`, or 14 tests for 10k objects.
+
+- High-speed objects can wreck the quality of the tree.
+
+- More complex.
+
+*** Considerations
+
+Cache concerns can probably be dealt with by explicit prefetching.
+
+A player using a rapid-fire weapon parallel to the B axis would quickly force
+the sweeping method to do far more than 14 tests per object along that column.
+
+Being able to skip point particles entirely eliminates a branch that the
+sweeping algorithm needs in an inner loop, and also effectively coalesces tree
+walks into larger objects.
+
+Not clear how to deal with fast-moving objects. Two objects in leaf positions
+at maximum speed in opposite directions will quickly make that entire branch of
+the tree huge. Tweaking the sort order to try to put volatile objects into
+upper branches isn't really viable since objects are created and destroyed
+rapidly, constantly shifting everything around. Just sorting more frequently
+could be viable. Re-sorting could actually take place independently of
+rewind/fast-forward since it is not required for physical accuracy, so we could
+re-sort much more frequently in most cases. TODO: Find out how fast this
+sorting is.
