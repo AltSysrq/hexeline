@@ -316,17 +316,31 @@ impl Affine2dH {
 
 impl<S : Space> ops::Mul<DualVector<S>> for Affine2d<S> {
     type Output = DualVector<S>;
+    #[inline(always)]
     fn mul(self, v: DualVector<S>) -> DualVector<S> {
-        // TODO We'd need fewer shuffles here if things were laid out better
         let prod = v.repr().mulfp(self.0, AFFINE_POINT);
         DualVector::from_repr(prod.shuf(0, 2, 1, 3) +
                               prod.shuf(1, 3, 0, 2))
     }
 }
 
+impl<S : Space> ops::Mul<LineVector<S>> for Affine2d<S> {
+    type Output = LineVector<S>;
+    #[inline(always)]
+    fn mul(self, v: LineVector<S>) -> LineVector<S> {
+        let prod0202 = v.repr().shuf(0, 0, 2, 2).mulfp(
+            self.0.shuf(0, 2, 0, 2), AFFINE_POINT);
+        let prod1313 = v.repr().shuf(1, 1, 3, 3).mulfp(
+            self.0.shuf(1, 3, 1, 3), AFFINE_POINT);
+        LineVector::from_repr(prod0202 + prod1313)
+
+    }
+}
+
 impl<S : Space> ops::Mul<Affine2d<S>> for Affine2d<S> {
     type Output = Affine2d<S>;
 
+    #[inline(always)]
     fn mul(self, rhs: Affine2d<S>) -> Affine2d<S> {
         // | 00+12 01+13 |
         // | 20+32 21+33 |
@@ -390,6 +404,21 @@ mod test {
     }
 
     #[test]
+    fn line_mult() {
+        let orig = Vol(1024, 2048, 4096, 8192);
+        let xform = Affine2d::rotate(DEG_90_CW);
+
+        let result = xform * orig;
+        let expected_fst = xform * orig.fst_dual();
+        let expected_snd = xform * orig.snd_dual();
+
+        assert_eq!(result.x1(), expected_fst.x());
+        assert_eq!(result.y1(), expected_fst.y());
+        assert_eq!(result.x2(), expected_snd.x());
+        assert_eq!(result.y2(), expected_snd.y());
+    }
+
+    #[test]
     fn affine_to_hexagonal() {
         let orig = Vod(102400, 25600);
         let rotation = Affine2d::rotate(Wrapping(5461 /* 30 deg */));
@@ -432,6 +461,12 @@ mod test {
     #[bench]
     fn bench_matrix_vector_mult(b: &mut Bencher) {
         b.iter(|| black_box(Affine2dO::identity()) * black_box(Vod(1, 1)));
+    }
+
+    #[bench]
+    fn bench_matrix_line_mult(b: &mut Bencher) {
+        b.iter(|| black_box(Affine2dO::identity()) *
+               black_box(Vol(1, 1, 2, 2)));
     }
 
     #[bench]
