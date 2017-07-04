@@ -37,7 +37,7 @@ pub struct CommonObject {
     /// Position, collision, and identity data.
     ///
     /// Field 0:
-    ///   - [ 0..31] biased_a
+    ///   - [ 0..31] a
     /// Field 1:
     ///   - [ 0..31] b
     /// Field 2:
@@ -114,8 +114,8 @@ pub struct CommonObject {
 /// is unimportant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct UnpackedCommonObject {
-    /// The A coordinate plus `rounded_radius * ROUNDED_RADIUS_FACTOR`.
-    pub biased_a: i32,
+    /// The A coordinate.
+    pub a: i32,
     /// The B coordinate.
     pub b: i32,
     /// The rotation.
@@ -173,7 +173,7 @@ pub struct UnpackedCommonObject {
 }
 
 impl CommonObject {
-    packed_field!(p:0[ 0..31]: i32 biased_a, set_biased_a, with_biased_a);
+    packed_field!(p:0[ 0..31]: i32 a, set_a, with_a);
     packed_field!(p:1[ 0..31]: i32 b, set_b, with_b);
     packed_field!(p:2[ 0.. 7]: u8 rounded_radius, set_rounded_radius,
                   with_rounded_radius);
@@ -210,7 +210,7 @@ impl CommonObject {
 
     pub fn unpack(self) -> UnpackedCommonObject {
         UnpackedCommonObject {
-            biased_a: self.biased_a(),
+            a: self.a(),
             b: self.b(),
             rounded_radius: self.rounded_radius(),
             collision_group: self.collision_group(),
@@ -283,7 +283,7 @@ impl UnpackedCommonObject {
             p: i32x4::splat(0),
             d: i32x4::splat(0),
         }
-            .with_biased_a(self.biased_a)
+            .with_a(self.a)
             .with_b(self.b)
             .with_rounded_radius(self.rounded_radius)
             .with_collision_group(self.collision_group)
@@ -336,7 +336,7 @@ mod test {
         const ID_BOUNDARIES:  &[u16] = &[0, 128, 255, 256, u16::MAX];
 
         // Brute-force test of all boundary values
-        for &biased_a in I32_BOUNDARIES {
+        for &a in I32_BOUNDARIES {
         for &b in I32_BOUNDARIES {
         for theta in I16_BOUNDARIES.iter().map(|&t| Wrapping(t)) {
         for &rounded_radius in U8_BOUNDARIES {
@@ -357,7 +357,7 @@ mod test {
         for &wakeup_increment in U8_BOUNDARIES {
         for &id in ID_BOUNDARIES {
             let orig = UnpackedCommonObject {
-                biased_a, b, theta, rounded_radius,
+                a, b, theta, rounded_radius,
                 collision_group, object_type, extended_data,
                 data_dst_size,
                 vax4, fa, aax16, vbx4, fb, abx16, vthetax4, ftheta, athetax16,
@@ -414,7 +414,7 @@ mod test {
 
         #[test]
         fn common_object_tick(
-            biased_a in -0x10000000i32..0x10000000,
+            a in -0x10000000i32..0x10000000,
             b in -0x10000000i32..0x10000000,
             theta in proptest::num::i16::ANY.prop_map(Wrapping),
             rounded_radius in proptest::num::u8::ANY,
@@ -436,7 +436,7 @@ mod test {
             tick_mod_4 in 0i32..4i32
         ) {
             let start = UnpackedCommonObject {
-                biased_a, b, theta, rounded_radius, collision_group,
+                a, b, theta, rounded_radius, collision_group,
                 object_type, extended_data, data_dst_size,
                 vax4, fa, aax16, vbx4, fb, abx16, vthetax4, ftheta,
                 athetax16, wakeup_counter, id,
@@ -463,10 +463,10 @@ mod test {
             // Note that we need to use >>2 and not /4 because they give
             // different results for negative values (-15841>>2 = -3961,
             // -15841/4 = -3960).
-            assert!(biased_a + (vax4 as i32 >> 2) == result.biased_a() ||
-                    biased_a + (vax4 as i32 >> 2) + 1 == result.biased_a(),
-                    "biased_a ({}) + vax4 ({}) -> {}",
-                    biased_a, vax4, result.biased_a());
+            assert!(a + (vax4 as i32 >> 2) == result.a() ||
+                    a + (vax4 as i32 >> 2) + 1 == result.a(),
+                    "a ({}) + vax4 ({}) -> {}",
+                    a, vax4, result.a());
             assert!(b + (vbx4 as i32 >> 2) == result.b() ||
                     b + (vbx4 as i32 >> 2) + 1 == result.b(),
                     "b ({}) + vbx4 ({}) -> {}",

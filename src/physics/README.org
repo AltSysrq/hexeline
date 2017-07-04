@@ -85,7 +85,7 @@ Goal: Cram all the common data into 2 128-bit SSE registers.
 
 Something like the below (note that the real thing is slightly different):
 
-xmm0[  0.. 31] i32 A coordinate + rounded-radius
+xmm0[  0.. 31] i32 A coordinate
 xmm0[ 32.. 63] i32 B coordinate
 xmm0[ 64.. 79] i16 Theta
 xmm0[ 80.. 95] u8 Rounded-radius / 256
@@ -188,7 +188,7 @@ Since we don't want to pay extra memory/cache bandwidth that would be needed by
 the traditional two-pass update-then-collide system, we instead perform
 collision detection inline with updating. After the general updating of an
 object, we "slide" it into place in the common data array, then scan backwards
-for objects whose A bounding box (A-2*radius..A) overlaps with the object in
+for objects whose A bounding box (A-radius..A+radius) overlaps with the object in
 question. Since we keep the array sorted by the upper A bound, we only need to
 look at a handful of objects here.
 
@@ -380,3 +380,7 @@ However, that doesn't take into account the fact that the off-line algorithm
 _always_ needs to traverse the tree to a particular composite, but the on-line
 algorithm does not. If we assume that on average we only need to down half the
 tree to prune it, we only need around 62000 comparisons.
+** Decision time
+
+The on-line Hilbert-tree algorithm is almost certainly best at this point,
+given how fast we can test bounding rhombi.

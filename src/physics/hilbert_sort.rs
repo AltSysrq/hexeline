@@ -91,7 +91,7 @@ mod test {
     fn bench_hilbert_sort(b: &mut Bencher) {
         let mut data: Vec<CommonObject> =
             (0..10000).into_iter().map(|i| UnpackedCommonObject {
-                biased_a: i * 256, .. UnpackedCommonObject::default()
+                a: i * 256, .. UnpackedCommonObject::default()
             }.pack()).collect();
         b.iter(|| hilbert_sort(&mut data));
     }
