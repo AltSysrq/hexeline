@@ -178,6 +178,14 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         } >> shift) & 1
     }
 
+    /// Return whether `a` is an in-bounds cell row for this composite.
+    #[inline(always)]
+    pub fn is_in_a_bound(&self, a: i16) -> bool {
+        let header = self.header();
+        let row = (a - header.row_offset()) as usize;
+        row < 1 << header.rows()
+    }
+
     /// Return whether `(a,b)` is an in-bounds cell address for this composite.
     #[inline(always)]
     pub fn is_in_bounds(&self, a: i16, b: i16) -> bool {
@@ -198,6 +206,29 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
         let col = (b - col_offset) as usize;
         col < (1 << header.pitch())
+    }
+
+    /// Test for a collision with a point particle.
+    ///
+    /// `relative_pos` is the relative position of the point particle relative
+    /// to this object's nominal coordinates, including adjusting for rotation.
+    ///
+    /// If there is a collision, returns the index of the cell affected.
+    #[inline(always)]
+    pub fn test_point_collision(&self, relative_pos: Vhs) -> Option<(i16,i16)> {
+        let grid_relative_pos = relative_pos - self.header().offset();
+        let (ia, ib) = grid_relative_pos.to_index();
+
+        if self.is_in_a_bound(ia as i16) &&
+            self.is_populated(ia as i16, ib as i16) &&
+            self.is_in_bounds(ia as i16, ib as i16) &&
+            ia >= i16::MIN as i32 && ia <= i16::MAX as i32 &&
+            ib >= i16::MIN as i32 && ia <= i16::MAX as i32
+        {
+            Some((ia as i16, ib as i16))
+        } else {
+            None
+        }
     }
 }
 

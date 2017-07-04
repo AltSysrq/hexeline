@@ -21,6 +21,7 @@ use simd::*;
 use simdext::*;
 
 use physics::Angle;
+use physics::coords::Vhs;
 
 /// The packed form of the common object data.
 ///
@@ -230,6 +231,11 @@ impl CommonObject {
             wakeup_increment: self.wakeup_increment(),
             id: self.id(),
         }
+    }
+
+    /// Return the position of this object as a vector.
+    pub fn pos(&self) -> Vhs {
+        Vhs::from_repr(self.p)
     }
 
     /// Advance this object forward one tick, considering only the common data.
