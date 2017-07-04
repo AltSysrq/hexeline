@@ -36,6 +36,8 @@ pub trait SimdExt {
     /// Return an n-bit value (starting with bit 0) containing the sign bit of
     /// each lane in this SIMD value.
     fn movemask(self) -> u32;
+    /// Return whether the sign bit is set in any lane.
+    fn any_sign_bit(self) -> bool;
     /// Compute the absolute value of each lane in this value.
     fn abs(self) -> Self;
 
@@ -112,6 +114,11 @@ impl SimdExt for i32x4 {
     #[inline(always)]
     fn movemask(self) -> u32 {
         i32x4_movemask(self)
+    }
+
+    #[inline(always)]
+    fn any_sign_bit(self) -> bool {
+        i32x4_any_sign_bit(self)
     }
 
     #[inline(always)]
@@ -262,6 +269,18 @@ fn i32x4_movemask(a: i32x4) -> u32 {
     ((bits.extract(1) as u32) << 1) |
     ((bits.extract(2) as u32) << 2) |
     ((bits.extract(3) as u32) << 3)
+}
+
+#[cfg(target_feature = "sse")]
+#[inline(always)]
+fn i32x4_any_sign_bit(a: i32x4) -> bool {
+    0 != a.movemask()
+}
+
+#[cfg(not(target_feature = "sse"))]
+#[inline(always)]
+fn i32x4_any_sign_bit(a: i32x4) -> bool {
+    bool32ix4::from_repr(a >> 31).any()
 }
 
 #[cfg(target_feature = "ssse3")]

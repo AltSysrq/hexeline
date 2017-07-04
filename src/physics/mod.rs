@@ -24,3 +24,4 @@ pub mod xform;
 pub mod arena;
 pub mod composite;
 pub mod hilbert_sort;
+pub mod bounding_rhombus;
