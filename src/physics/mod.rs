@@ -17,8 +17,7 @@
 
 mod units;
 pub use self::units::*;
-mod common_object;
-pub use self::common_object::*;
+pub mod common_object;
 pub mod coords;
 pub mod xform;
 pub mod arena;

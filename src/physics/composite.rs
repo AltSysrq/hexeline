@@ -33,15 +33,18 @@
 //! index and B as a column index.
 
 use std::borrow::Borrow;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::fmt;
 use std::i16;
 use std::ptr;
 
+use arrayvec::ArrayVec;
 use simd::*;
 use smallvec::{Array, SmallVec};
 
+use physics::common_object::*;
 use physics::coords::*;
+use physics::xform::Affine2dH;
 
 /// Unpacked form of `CompositeHeader`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -113,6 +116,8 @@ impl fmt::Debug for CompositeHeader {
         fmt::Debug::fmt(&self.unpack(), f)
     }
 }
+
+pub type CollisionSet = ArrayVec<[[(i16,i16);2];16]>;
 
 /// The common prefix data shared by all composite objects.
 ///
@@ -193,19 +198,20 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let row = (a - header.row_offset()) as usize;
         if row >= (1 << header.rows()) { return false; }
 
-        let array = self.col_offset_array_start();
-        let col_offset = if self.use_16bit_col_offset() {
-            unsafe {
-                ptr::read((array as *const i16).offset(row as isize))
-            }
-        } else {
-            (unsafe {
-                ptr::read((array as *const i8).offset(row as isize))
-            }) as i16
-        };
+        let col_offset = unsafe { self.col_offset_unchecked(row) };
 
         let col = (b - col_offset) as usize;
         col < (1 << header.pitch())
+    }
+
+    #[inline(always)]
+    unsafe fn col_offset_unchecked(&self, row: usize) -> i16 {
+        let array = self.col_offset_array_start();
+        if self.use_16bit_col_offset() {
+            ptr::read((array as *const i16).offset(row as isize))
+        } else {
+            (ptr::read((array as *const i8).offset(row as isize))) as i16
+        }
     }
 
     /// Test for a collision with a point particle.
@@ -222,13 +228,134 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         if self.is_in_a_bound(ia as i16) &&
             self.is_populated(ia as i16, ib as i16) &&
             self.is_in_bounds(ia as i16, ib as i16) &&
-            ia >= i16::MIN as i32 && ia <= i16::MAX as i32 &&
-            ib >= i16::MIN as i32 && ia <= i16::MAX as i32
+            (ia as i16 as i32) == ia && (ib as i16 as i32) == ib
         {
             Some((ia as i16, ib as i16))
         } else {
             None
         }
+    }
+
+    /// Compare two composites for collisions.
+    ///
+    /// `self_inverse_rot_xform` is the value of
+    /// `Affine2dH::rotate_hex(-self_obj.theta())`.
+    ///
+    /// Returns the set of all pairs of colliding cells, or a subset of them if
+    /// the vector is filled.
+    ///
+    /// Note that this operation is not commutative since the cell collision
+    /// check is only approximate.
+    pub fn test_composite_collision<R : Borrow<[i32x4]>>(
+        &self, self_obj: CommonObject,
+        that: &CompositeObject<R>, that_obj: CommonObject,
+        self_inverse_rot_xform: Affine2dH
+    ) -> CollisionSet {
+        // To check the collision, we first take the bounding rhombus of `that`
+        // and overlay it on the grid of `self` to find candidate cells; we
+        // then check each cell of `self` within that rhombus against `that` to
+        // see if anything overlaps.
+        //
+        // There is not actually any reason to try to compare the smaller
+        // object against the larger one or vice-versa. If `self` is
+        // substantially larger than `that`, the bounding rhombus of `that`
+        // constrains us to a smaller number of cells. If `self` is
+        // substantially smaller, even if `that` covers all of `self`, we still
+        // don't have too many cells to check.
+
+        // Determine where the centre of gravity of `that` falls within the
+        // grid of `self`.
+        //
+        // Code below assumes this value stays in dual coordinates.
+        let that_cog_self_grid: Vhd = self_inverse_rot_xform *
+            (that_obj.pos() - self_obj.pos()).dual() -
+            self.header().offset().dual();
+        // Determine the bounding rhombus of `that` within the grid of `self`.
+        // We can use a simple bitshift with a slop factor for a fast
+        // approximation of what area of the grid is covered.
+        let that_radius = (that_obj.rounded_radius() as i32)
+            << ROUNDED_RADIUS_SHIFT;
+        let that_bounds_self_grid = that_cog_self_grid.repr() +
+            i32x4::new(-that_radius, -that_radius, that_radius, that_radius);
+        let that_bounds_self_grid =
+            (that_bounds_self_grid >> CONTINUOUS_TO_CELL_SHIFT) +
+            i32x4::new(-1, -1, 1, 1);
+
+        // Now determine the position of our (0,0) cell within `that`'s grid.
+        let that_inverse_rot_xform = Affine2dH::rotate_hex(-that_obj.theta());
+        let origin_pos = self_obj.pos().dual() +
+            Affine2dH::rotate_hex(self_obj.theta()) *
+            self.header().offset().dual();
+        let self_origin_that_grid =
+            (that_inverse_rot_xform * origin_pos).single() -
+            that.header().offset();
+
+        // Determine the displacement within `that`'s grid for moving (+1,0)
+        // and (0,+1) in our own cell grid
+        let grid_displacement = that_inverse_rot_xform *
+            Vhl(1 << CONTINUOUS_TO_CELL_SHIFT,
+                0, 0,
+                1 << CONTINUOUS_TO_CELL_SHIFT);
+
+        // Determine the first and last rows to scan, and start tracking the
+        // base coordinate for that row.
+        let first_row = max(that_bounds_self_grid.extract(0),
+                            self.header().row_offset() as i32);
+        let last_row = min(that_bounds_self_grid.extract(2),
+                           (self.header().row_offset() as i32) +
+                           (1 << self.header().rows()) - 1);
+        let mut row_zero: Vhs = self_origin_that_grid +
+            grid_displacement.fst() * Vhs(first_row, first_row);
+
+        // Scan the columns of each row for overlapping cells
+        let mut collisions = ArrayVec::new();
+        let pitch = 1 << self.header().pitch();
+        for row in first_row..last_row + 1 {
+            let col_offset = unsafe {
+                self.col_offset_unchecked(
+                    (row - self.header().row_offset() as i32) as usize
+                )
+            };
+
+            let first_col = max(that_bounds_self_grid.extract(1),
+                                col_offset as i32);
+            let last_col = min(that_bounds_self_grid.extract(3),
+                               col_offset as i32 + pitch - 1);
+            let mut coord: Vhs = row_zero + grid_displacement.snd() *
+                Vhs(first_col, first_col);
+            for col in first_col..last_col + 1 {
+                if self.is_populated(row as i16, col as i16) {
+                    let (rhs_a, rhs_b) = coord.to_grid_overlap();
+                    macro_rules! check {
+                        ($off:expr) => {
+                            let a = rhs_a.extract($off);
+                            let b = rhs_b.extract($off);
+                            if that.is_populated(a as i16, b as i16) &&
+                                that.is_in_bounds(a as i16, b as i16) &&
+                                (a as i16 as i32) == a &&
+                                (b as i16 as i32) == b
+                            {
+                                if collisions.push([(row as i16, col as i16),
+                                                    (a as i16, b as i16)])
+                                    .is_some()
+                                {
+                                    return collisions;
+                                }
+                            }
+                        }
+                    }
+                    check!(0);
+                    check!(1);
+                    check!(2);
+                    check!(3);
+                }
+                coord = coord + grid_displacement.snd();
+            }
+
+            row_zero = row_zero + grid_displacement.fst();
+        }
+
+        collisions
     }
 }
 

@@ -23,6 +23,9 @@ use simdext::*;
 use physics::Angle;
 use physics::coords::Vhs;
 
+pub const ROUNDED_RADIUS_SHIFT: u32 = 8;
+pub const ROUNDED_RADIUS_FACTOR: u32 = 1 << ROUNDED_RADIUS_SHIFT;
+
 /// The packed form of the common object data.
 ///
 /// The fields and their representational details are public in order to allow

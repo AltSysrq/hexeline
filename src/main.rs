@@ -16,6 +16,7 @@
 #![feature(test, platform_intrinsics, cfg_target_feature)]
 #![allow(dead_code)]
 
+extern crate arrayvec;
 extern crate cgmath as cg;
 extern crate fnv;
 extern crate gl;

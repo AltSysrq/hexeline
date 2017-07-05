@@ -16,7 +16,7 @@
 use simd::*;
 use simdext::*;
 
-use physics::CommonObject;
+use physics::common_object::CommonObject;
 
 #[allow(unused_assignments)]
 pub fn hilbert_sort(array: &mut [CommonObject]) {
@@ -84,7 +84,7 @@ pub fn hilbert_sort(array: &mut [CommonObject]) {
 mod test {
     use test::Bencher;
 
-    use physics::UnpackedCommonObject;
+    use physics::common_object::UnpackedCommonObject;
     use super::*;
 
     #[bench]
