@@ -14,7 +14,6 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 use std::num::Wrapping;
-use std::mem;
 
 use simd::*;
 
@@ -90,6 +89,12 @@ pub trait SimdExt {
 pub trait SimdExt4 {
     /// Shuffle self using the given immediates.
     fn shuf(self, a: u32, b: u32, c: u32, d: u32) -> Self;
+
+    /// Produce a single vector by blending the two vectors together.
+    ///
+    /// Each index can be 00, 01, 02, or 03 to select from the left vector, or
+    /// 10, 11, 12, or 13 to select from the second vector.
+    fn blend(self, right: Self, a: u32, b: u32, c: u32, d:u32) -> Self;
 }
 
 impl SimdExt for i32x4 {
@@ -208,6 +213,19 @@ impl SimdExt4 for i32x4 {
         i32x4::new(self.extract(a), self.extract(b),
                    self.extract(c), self.extract(d))
     }
+
+    #[inline(always)]
+    fn blend(self, other: Self, a: u32, b: u32, c: u32, d: u32) -> Self {
+        macro_rules! which {
+            ($v:expr) => { if $v < 10 {
+                self.extract($v)
+            } else {
+                other.extract($v - 10)
+            } }
+        }
+
+        i32x4::new(which!(a), which!(b), which!(c), which!(d))
+    }
 }
 
 #[cfg(target_feature = "sse4.1")]
@@ -224,25 +242,47 @@ fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
     Sse41I32x4::min(a, b)
 }
 
-#[cfg(target_feature = "sse4.1")]
-#[inline(always)]
-fn i32x4_nsw_clamp3(a: i32x4, lower: i32x4, upper: i32x4) -> i32x4 {
-    a.nsw_max(lower).nsw_min(upper)
-}
-
-#[cfg(not(target_feature = "sse4.1"))]
+#[cfg(all(not(target_feature = "sse4.1"), not(target_feature = "neon")))]
 #[inline(always)]
 fn i32x4_nsw_max(a: i32x4, b: i32x4) -> i32x4 {
     bool32ix4::from_repr((a - b) >> 31).select(b, a)
 }
 
-#[cfg(not(target_feature = "sse4.1"))]
+#[cfg(all(not(target_feature = "sse4.1"), not(target_feature = "neon")))]
 #[inline(always)]
 fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
     bool32ix4::from_repr((a - b) >> 31).select(a, b)
 }
 
-#[cfg(not(target_feature = "sse4.1"))]
+#[cfg(target_feature = "neon")]
+#[inline(always)]
+fn i32x4_nsw_max(a: i32x4, b: i32x4) -> i32x4 {
+    extern "platform-intrinsic" {
+        fn arm_vmaxq_s32(a: i32x4, b: i32x4) -> i32x4;
+    }
+    unsafe {
+        arm_vmaxq_s32(a, b)
+    }
+}
+
+#[cfg(target_feature = "neon")]
+#[inline(always)]
+fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
+    extern "platform-intrinsic" {
+        fn arm_vminq_s32(a: i32x4, b: i32x4) -> i32x4;
+    }
+    unsafe {
+        arm_vminq_s32(a, b)
+    }
+}
+
+#[cfg(any(target_feature = "sse4.1", target_feature = "neon"))]
+#[inline(always)]
+fn i32x4_nsw_clamp3(a: i32x4, lower: i32x4, upper: i32x4) -> i32x4 {
+    a.nsw_max(lower).nsw_min(upper)
+}
+
+#[cfg(not(any(target_feature = "sse4.1", target_feature = "neon")))]
 #[inline(always)]
 fn i32x4_nsw_clamp3(a: i32x4, lower: i32x4, upper: i32x4) -> i32x4 {
     let clamp3 = a.nsw_max(lower).nsw_min(upper);
@@ -257,6 +297,7 @@ fn i32x4_movemask(a: i32x4) -> u32 {
         fn x86_mm_movemask_ps(a: f32x4) -> i32;
     }
     unsafe {
+        use std::mem;
         x86_mm_movemask_ps(mem::transmute(a)) as u32
     }
 }
