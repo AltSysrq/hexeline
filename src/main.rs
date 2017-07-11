@@ -18,8 +18,10 @@
 
 extern crate arrayvec;
 extern crate cgmath as cg;
+extern crate env_logger;
 extern crate fnv;
 extern crate gl;
+#[macro_use] extern crate log;
 extern crate png;
 extern crate sdl2;
 extern crate simd;
@@ -28,6 +30,7 @@ extern crate test;
 
 #[cfg(test)] #[macro_use] extern crate proptest;
 
+use std::ffi::CStr;
 use std::io::{self, Write};
 
 use gl::types::*;
@@ -50,6 +53,8 @@ fn main() {
             dflt
         }
     }
+
+    env_logger::init().expect("Failed to initialise logging");
 
     let sdl_context = sdl2::init().unwrap_or_else(die);
     let _sdl_audio = sdl_context.audio().unwrap_or_else(die);
@@ -83,6 +88,15 @@ fn main() {
     // Load all the GL functions, since this doesn't happen on-demand
     gl::load_with(|s| sdl_video.gl_get_proc_address(s) as
                   *const std::os::raw::c_void);
+
+    unsafe {
+        info!("GL Version: {} by {}",
+              CStr::from_ptr(gl::GetString(gl::VERSION)).to_string_lossy(),
+              CStr::from_ptr(gl::GetString(gl::VENDOR)).to_string_lossy());
+        info!("GLSL Version: {}",
+              CStr::from_ptr(gl::GetString(gl::SHADING_LANGUAGE_VERSION))
+              .to_string_lossy());
+    }
 
     unsafe {
         gl::Viewport(0, 0, screen.drawable_size().0 as GLsizei,

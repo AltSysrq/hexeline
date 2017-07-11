@@ -49,6 +49,8 @@ impl Texture {
 
         let mut data = Cow::Borrowed(data);
 
+        check_gl_error!();
+
         // Scale down until the implementation will accept it
         loop {
             unsafe {
@@ -60,6 +62,7 @@ impl Texture {
                 gl::GetTexLevelParameteriv(gl::PROXY_TEXTURE_2D, 0,
                                            gl::TEXTURE_WIDTH,
                                            &mut image_is_supported);
+                ::graphic::error::ignore_errors();
                 if 0 != image_is_supported { break; }
 
                 if 1 == w && 1 == h {
@@ -94,6 +97,8 @@ impl Texture {
                 level += 1;
             }
 
+            check_gl_error!();
+
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER,
                               gl::NEAREST as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER,
@@ -104,6 +109,8 @@ impl Texture {
                               gl::CLAMP_TO_EDGE as i32);
 
             gl::PixelStorei(gl::UNPACK_ROW_LENGTH, 0);
+
+            check_gl_error!();
         }
     }
 
