@@ -15,7 +15,6 @@
 
 use std::fmt::Debug;
 use std::ffi::CString;
-use gl;
 use gl::types::*;
 use cg;
 
@@ -27,37 +26,37 @@ pub trait UniformFieldType {
 
 impl UniformFieldType for f32 {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform1f(ix, *self);
+        gl!(Uniform1f, ix, *self);
     }
 }
 
 impl UniformFieldType for cg::Vector2<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform2fv(ix, 1, self as *const Self as *const f32);
+        gl!(Uniform2fv, ix, 1, self as *const Self as *const f32);
     }
 }
 
 impl UniformFieldType for cg::Vector3<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform3fv(ix, 1, self as *const Self as *const f32);
+        gl!(Uniform3fv, ix, 1, self as *const Self as *const f32);
     }
 }
 
 impl UniformFieldType for cg::Vector4<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform4fv(ix, 1, self as *const Self as *const f32);
+        gl!(Uniform4fv, ix, 1, self as *const Self as *const f32);
     }
 }
 
 impl UniformFieldType for cg::Matrix4<f32> {
     unsafe fn put(&self, ix: GLint) {
-        gl::UniformMatrix4fv(ix, 1, 0, self as *const Self as *const f32);
+        gl!(UniformMatrix4fv, ix, 1, 0, self as *const Self as *const f32);
     }
 }
 
 impl UniformFieldType for GLuint {
     unsafe fn put(&self, ix: GLint) {
-        gl::Uniform1ui(ix, *self);
+        gl!(Uniform1ui, ix, *self);
     }
 }
 
@@ -71,8 +70,8 @@ pub trait Uniform {
 pub fn try_bind_uniform_field(program: &ProgramHandle, name: &str)
                               -> Result<GLint,String> {
 unsafe {
-    let ix = gl::GetUniformLocation(
-        program.raw(), CString::new(name).unwrap().as_ptr());
+    let ix = gl!(GetUniformLocation,
+                 program.raw(), CString::new(name).unwrap().as_ptr());
     if -1 == ix {
         Err(format!("Uniform {} could not be bound", name))
     } else {

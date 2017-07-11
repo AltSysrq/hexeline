@@ -26,8 +26,10 @@ impl ShaderHandle {
     unsafe {
         let raw = gl::CreateShader(typ);
         if 0 == raw {
+            let err = gl::GetError();
+            super::error::ignore_errors();
             return Err(format!("Unable to allocate shader {}: {}",
-                               name, gl::GetError()));
+                               name, err));
         }
 
         let wrapped = ShaderHandle(raw);
@@ -52,22 +54,24 @@ impl ShaderHandle {
         composed_source.push_str(source);
         composed_source.push('\x00');
         let srcptr = composed_source.as_ptr() as *const GLchar;
-        gl::ShaderSource(wrapped.0, 1, &srcptr, std::ptr::null());
-        gl::CompileShader(wrapped.0);
+        gl!(ShaderSource, wrapped.0, 1, &srcptr, std::ptr::null());
+        gl!(CompileShader, wrapped.0);
 
         let mut status = 0 as GLint;
-        gl::GetShaderiv(wrapped.0, gl::COMPILE_STATUS, &mut status);
+        gl!(GetShaderiv, wrapped.0, gl::COMPILE_STATUS, &mut status);
         if 0 == status {
             let mut log_data = [0 as u8;1024];
             let mut log_size = 0 as GLsizei;
-            gl::GetShaderInfoLog(
+            gl!(GetShaderInfoLog,
                 wrapped.0, std::mem::size_of_val(&log_data) as GLsizei,
                 &mut log_size, &mut log_data[0] as *mut u8 as *mut GLchar);
 
             let log = std::str::from_utf8(&log_data[0..(log_size as usize)])
                 .unwrap_or("(compile log is garbage)");
+            let err = gl::GetError();
+            ::graphic::error::ignore_errors();
             return Err(format!("Unable to compile shader {}: {}\n{}",
-                               name, gl::GetError(), log));
+                               name, err, log));
         }
 
         Ok(wrapped)
@@ -77,7 +81,7 @@ impl ShaderHandle {
 impl Drop for ShaderHandle {
     fn drop(&mut self) {
     unsafe {
-        gl::DeleteShader(self.0);
+        gl!(DeleteShader, self.0);
     } }
 }
 
@@ -93,8 +97,9 @@ impl ProgramHandle {
     unsafe {
         let raw = gl::CreateProgram();
         if 0 == raw {
-            return Err(format!("Unable to allocate shader program: {}",
-                               gl::GetError()));
+            let err = gl::GetError();
+            ::graphic::error::ignore_errors();
+            return Err(format!("Unable to allocate shader program: {}", err));
         }
 
         let wrapped = ProgramHandle {
@@ -103,16 +108,16 @@ impl ProgramHandle {
         };
 
         for component in wrapped.components.iter() {
-            gl::AttachShader(wrapped.handle, component.0);
+            gl!(AttachShader, wrapped.handle, component.0);
         }
-        gl::LinkProgram(wrapped.handle);
+        gl!(LinkProgram, wrapped.handle);
 
         let mut status = 0 as GLint;
-        gl::GetProgramiv(wrapped.handle, gl::LINK_STATUS, &mut status);
+        gl!(GetProgramiv, wrapped.handle, gl::LINK_STATUS, &mut status);
         if 0 == status {
             let mut log_data = [0 as u8; 1024];
             let mut log_size = 0 as GLsizei;
-            gl::GetProgramInfoLog(
+            gl!(GetProgramInfoLog,
                 wrapped.handle, std::mem::size_of_val(&log_data) as GLsizei,
                 &mut log_size, &mut log_data[0] as *mut u8 as *mut GLchar);
 
@@ -137,13 +142,13 @@ impl ProgramHandle {
     pub fn raw(&self) -> GLuint { self.handle }
     pub fn activate(&self) {
     unsafe {
-        gl::UseProgram(self.handle);
+        gl!(UseProgram, self.handle);
     } }
 }
 
 impl Drop for ProgramHandle {
     fn drop(&mut self) {
     unsafe {
-        gl::DeleteProgram(self.handle);
+        gl!(DeleteProgram, self.handle);
     } }
 }
