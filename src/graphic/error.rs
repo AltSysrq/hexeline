@@ -15,6 +15,26 @@
 
 use gl;
 
+#[cfg(debug_assertions)]
+#[macro_export]
+macro_rules! gl {
+    ($name:ident $(, $arg:expr)*) => { {
+        let r = ::gl::$name($($arg),*);
+        ::graphic::error::check_error(
+            concat!(file!(), ":", line!(), " ",
+                    stringify!($name), ":"));
+        r
+    } }
+}
+
+#[cfg(not(debug_assertions))]
+#[macro_export]
+macro_rules! gl {
+    ($name:ident $(, $arg:expr)*) => {
+        ::gl::$name($($arg),*)
+    }
+}
+
 #[macro_export]
 macro_rules! check_gl_error {
     () => {

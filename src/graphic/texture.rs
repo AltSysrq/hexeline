@@ -28,7 +28,7 @@ impl Texture {
     pub fn new() -> Self {
         let mut unit = 0;
         unsafe {
-            gl::GenTextures(1, &mut unit);
+            gl!(GenTextures, 1, &mut unit);
         }
 
         Texture(unit, ptr::null())
@@ -54,14 +54,15 @@ impl Texture {
         // Scale down until the implementation will accept it
         loop {
             unsafe {
-                gl::TexImage2D(gl::PROXY_TEXTURE_2D, 0, gl::RGBA as GLint,
-                               w as i32, h as i32, 0,
-                               gl::BGRA, gl::UNSIGNED_BYTE,
-                               data.as_ptr() as *const GLvoid);
+                gl!(TexImage2D,
+                    gl::PROXY_TEXTURE_2D, 0, gl::RGBA as GLint,
+                    w as i32, h as i32, 0,
+                    gl::BGRA, gl::UNSIGNED_BYTE,
+                    data.as_ptr() as *const GLvoid);
                 let mut image_is_supported = 0;
-                gl::GetTexLevelParameteriv(gl::PROXY_TEXTURE_2D, 0,
-                                           gl::TEXTURE_WIDTH,
-                                           &mut image_is_supported);
+                gl!(GetTexLevelParameteriv,
+                    gl::PROXY_TEXTURE_2D, 0, gl::TEXTURE_WIDTH,
+                    &mut image_is_supported);
                 ::graphic::error::ignore_errors();
                 if 0 != image_is_supported { break; }
 
@@ -78,16 +79,17 @@ impl Texture {
 
         unsafe {
             let mut level = 0;
-            gl::BindTexture(gl::TEXTURE_2D, self.id());
+            gl!(BindTexture, gl::TEXTURE_2D, self.id());
             loop {
-                gl::PixelStorei(gl::UNPACK_ROW_LENGTH, pitch as i32);
-                gl::TexImage2D(gl::TEXTURE_2D, level, gl::RGBA as GLint,
-                               w as i32, h as i32, 0,
-                               // This is presumably sensitive to machine byte
-                               // order. TODO Address if we encounter any
-                               // big-endian systems we care to support.
-                               gl::BGRA, gl::UNSIGNED_BYTE,
-                               data.as_ptr() as *const GLvoid);
+                gl!(PixelStorei, gl::UNPACK_ROW_LENGTH, pitch as i32);
+                gl!(TexImage2D,
+                    gl::TEXTURE_2D, level, gl::RGBA as GLint,
+                    w as i32, h as i32, 0,
+                    // This is presumably sensitive to machine byte order.
+                    // TODO Address if we encounter any big-endian systems we
+                    // care to support.
+                    gl::BGRA, gl::UNSIGNED_BYTE,
+                    data.as_ptr() as *const GLvoid);
 
                 if !mipmap || 1 == w && 1 == h { break; }
 
@@ -99,16 +101,16 @@ impl Texture {
 
             check_gl_error!();
 
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER,
-                              gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER,
-                              gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S,
-                              gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T,
-                              gl::CLAMP_TO_EDGE as i32);
+            gl!(TexParameteri,
+                gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            gl!(TexParameteri,
+                gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl!(TexParameteri,
+                gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl!(TexParameteri,
+                gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
 
-            gl::PixelStorei(gl::UNPACK_ROW_LENGTH, 0);
+            gl!(PixelStorei, gl::UNPACK_ROW_LENGTH, 0);
 
             check_gl_error!();
         }
@@ -116,7 +118,7 @@ impl Texture {
 
     pub fn bind(&self) {
         unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, self.id());
+            gl!(BindTexture, gl::TEXTURE_2D, self.id());
         }
     }
 
@@ -129,7 +131,7 @@ impl Texture {
 impl Drop for Texture {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteTextures(1, &self.0)
+            gl!(DeleteTextures, 1, &self.0);
         }
     }
 }

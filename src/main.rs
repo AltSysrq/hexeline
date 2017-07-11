@@ -36,6 +36,7 @@ use std::io::{self, Write};
 use gl::types::*;
 
 mod simdext;
+#[macro_use]
 mod graphic;
 mod physics;
 
@@ -99,8 +100,9 @@ fn main() {
     }
 
     unsafe {
-        gl::Viewport(0, 0, screen.drawable_size().0 as GLsizei,
-                     screen.drawable_size().1 as GLsizei);
+        gl!(Viewport,
+            0, 0, screen.drawable_size().0 as GLsizei,
+            screen.drawable_size().1 as GLsizei);
     }
 
     let projection_matrix =
@@ -148,7 +150,7 @@ fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders,
     use graphic::*;
 
     unsafe {
-        gl::Clear(gl::COLOR_BUFFER_BIT);
+        gl!(Clear, gl::COLOR_BUFFER_BIT);
     }
 
     let vertices = [
@@ -173,7 +175,7 @@ fn draw(matrix: &cg::Matrix4<f32>, shaders: &graphic::Shaders,
     };
     vao.activate(&uniform);
     unsafe {
-        gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+        gl!(DrawArrays, gl::TRIANGLE_STRIP, 0, 4);
     }
 }
 

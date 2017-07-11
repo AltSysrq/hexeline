@@ -13,7 +13,6 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-use gl;
 use gl::types::*;
 
 use super::vbo::{Vbo,ActiveVbo};
@@ -31,7 +30,7 @@ pub struct Vao<'a, 'b: 'a, U: Uniform + 'b, V: Vertex + 'b> {
 impl<'a, 'b: 'a, U: Uniform + 'b, V: Vertex + 'b> Drop for Vao<'a,'b,U,V> {
     fn drop(&mut self) {
     unsafe {
-        gl::DeleteVertexArrays(1, &self.handle);
+        gl!(DeleteVertexArrays, 1, &self.handle);
     } }
 }
 
@@ -48,7 +47,7 @@ impl<'a, 'b: 'a, U: Uniform + 'b, V: Vertex + 'b> Vao<'a,'b,U,V> {
              vbo: &'a Vbo<V>) -> Result<Self,String> {
     unsafe {
         let mut raw = 0 as GLuint;
-        gl::GenVertexArrays(1, &mut raw);
+        gl!(GenVertexArrays, 1, &mut raw);
         if 0 == raw {
             Err("Failed to allocate VAO".to_string())
         } else {
@@ -62,7 +61,7 @@ impl<'a, 'b: 'a, U: Uniform + 'b, V: Vertex + 'b> Vao<'a,'b,U,V> {
 
     pub fn make_current(&self) {
     unsafe {
-        gl::BindVertexArray(self.handle);
+        gl!(BindVertexArray, self.handle);
     } }
 
     pub fn activate<'c>(&'c self, uniform: &U)
