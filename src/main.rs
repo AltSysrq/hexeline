@@ -65,8 +65,8 @@ fn main() {
     let mut sdl_event_pump = sdl_context.event_pump().unwrap_or_else(die);
 
     sdl_video.gl_attr().set_context_profile(
-        sdl2::video::GLProfile::Core);
-    sdl_video.gl_attr().set_context_version(3, 0);
+        sdl2::video::GLProfile::GLES);
+    sdl_video.gl_attr().set_context_version(2, 0);
 
     let current_mode = sdl_video.current_display_mode(0)
         .unwrap_or_else(die);

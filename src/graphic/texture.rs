@@ -52,7 +52,7 @@ impl Texture {
         check_gl_error!();
 
         // Scale down until the implementation will accept it
-        loop {
+        while false {
             unsafe {
                 gl::TexImage2D(gl::PROXY_TEXTURE_2D, 0, gl::RGBA as GLint,
                                w as i32, h as i32, 0,

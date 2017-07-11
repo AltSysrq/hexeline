@@ -32,7 +32,23 @@ impl ShaderHandle {
 
         let wrapped = ShaderHandle(raw);
 
-        let mut composed_source = String::from("#version 130\n");
+        let mut composed_source = String::from("#version 100\n");
+        // Set the same defaults other GL versions use
+        if gl::VERTEX_SHADER == typ {
+            composed_source.push_str("\
+                precision highp float;\n\
+                precision highp int;\n\
+                precision lowp sampler2D;\n\
+                precision lowp samplerCube;\n\
+                ");
+        } else {
+            composed_source.push_str("\
+                precision mediump int;\n\
+                precision mediump float;\n\
+                precision lowp sampler2D;\n\
+                precision lowp samplerCube;\n\
+                ");
+        }
         composed_source.push_str(source);
         composed_source.push('\x00');
         let srcptr = composed_source.as_ptr() as *const GLchar;
