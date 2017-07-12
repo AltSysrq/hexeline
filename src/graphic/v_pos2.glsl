@@ -1,6 +1,6 @@
 uniform mat4 matrix;
 
-in vec2 v;
+attribute vec2 v;
 
 void main() {
   gl_Position = matrix * vec4(v.x, v.y, 0.0, 1.0);

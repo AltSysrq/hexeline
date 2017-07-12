@@ -34,7 +34,7 @@ impl Texture {
         Texture(unit, ptr::null())
     }
 
-    /// Blit `data` (an ARGB texture in machine byte order) onto the texture.
+    /// Blit `data` (an ARGB texture in physical byte order) onto the texture.
     ///
     /// `w` and `h` specify the dimensions of the texture; `pitch` is the
     /// physical row width.
@@ -42,7 +42,7 @@ impl Texture {
     /// If the implementation does not support the data as presented, it is
     /// scaled down until it does. If `mipmap` is true, all mipmap levels will
     /// be generated automatically as well.
-    pub fn blit_argb(&mut self, data: &[u32],
+    pub fn blit_rgba(&mut self, data: &[u32],
                      mut w: u32, mut pitch: u32, mut h: u32,
                      mipmap: bool) {
         assert!(h as usize * pitch as usize <= data.len());
@@ -52,12 +52,13 @@ impl Texture {
         check_gl_error!();
 
         // Scale down until the implementation will accept it
-        loop {
+        // TODO Disabled for now — GLES doesn't support PROXY_TEXTURE_2D
+        while false {
             unsafe {
                 gl!(TexImage2D,
                     gl::PROXY_TEXTURE_2D, 0, gl::RGBA as GLint,
                     w as i32, h as i32, 0,
-                    gl::BGRA, gl::UNSIGNED_BYTE,
+                    gl::RGBA, gl::UNSIGNED_BYTE,
                     data.as_ptr() as *const GLvoid);
                 let mut image_is_supported = 0;
                 gl!(GetTexLevelParameteriv,
@@ -85,10 +86,7 @@ impl Texture {
                 gl!(TexImage2D,
                     gl::TEXTURE_2D, level, gl::RGBA as GLint,
                     w as i32, h as i32, 0,
-                    // This is presumably sensitive to machine byte order.
-                    // TODO Address if we encounter any big-endian systems we
-                    // care to support.
-                    gl::BGRA, gl::UNSIGNED_BYTE,
+                    gl::RGBA, gl::UNSIGNED_BYTE,
                     data.as_ptr() as *const GLvoid);
 
                 if !mipmap || 1 == w && 1 == h { break; }
@@ -154,4 +152,11 @@ fn scale_half(px: &[u32], w: &mut u32, pitch: &mut u32, h: &mut u32)
     *pitch = nw;
     *h = nh;
     dst
+}
+
+#[inline]
+pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    // TODO Byte-order sensitive. Address big-endian systems if we encounter
+    // such a system we care to support.
+    (r as u32) | ((g as u32) << 8) | ((b as u32) << 16) | ((a as u32) << 24)
 }

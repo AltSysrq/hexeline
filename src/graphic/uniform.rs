@@ -56,7 +56,7 @@ impl UniformFieldType for cg::Matrix4<f32> {
 
 impl UniformFieldType for GLuint {
     unsafe fn put(&self, ix: GLint) {
-        gl!(Uniform1ui, ix, *self);
+        gl!(Uniform1i, ix, *self as GLint);
     }
 }
 

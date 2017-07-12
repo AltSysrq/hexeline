@@ -66,8 +66,8 @@ fn main() {
     let mut sdl_event_pump = sdl_context.event_pump().unwrap_or_else(die);
 
     sdl_video.gl_attr().set_context_profile(
-        sdl2::video::GLProfile::Core);
-    sdl_video.gl_attr().set_context_version(3, 0);
+        sdl2::video::GLProfile::GLES);
+    sdl_video.gl_attr().set_context_version(2, 0);
 
     let current_mode = sdl_video.current_display_mode(0)
         .unwrap_or_else(die);
@@ -239,10 +239,7 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
                 r = (Wrapping(r) + Wrapping(128)).0;
             }
 
-            data[(y * w + x) as usize] = 0xFF000000 +
-                ((r as u32) << 16) +
-                ((g as u32) <<  8) +
-                (b as u32);
+            data[(y * w + x) as usize] = graphic::texture::rgba(r, g, b, 255);
         }
     }
 
@@ -251,8 +248,9 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
         let affine = Affine2d::rotate(Wrapping(theta as i16));
         let xformed = affine * radius;
         let px = xformed + Vod(128, 128);
-        data[(px.y()*(w as i32) + px.x()) as usize] |= 0x00FF0000;
+        data[(px.y()*(w as i32) + px.x()) as usize] |=
+            graphic::texture::rgba(255, 0, 0, 0);
     }
 
-    tex.blit_argb(&data, w, w, h, false);
+    tex.blit_rgba(&data, w, w, h, false);
 }
