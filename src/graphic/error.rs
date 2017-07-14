@@ -22,7 +22,7 @@ macro_rules! gl {
         let r = ::gl::$name($($arg),*);
         ::graphic::error::check_error(
             concat!(file!(), ":", line!(), " ",
-                    stringify!($name), ":"));
+                    stringify!($name)));
         r
     } }
 }
