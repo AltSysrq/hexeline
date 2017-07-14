@@ -1,0 +1,134 @@
+* Goals
+
+Cells should have high detail.
+
+Some features overlap outside the cell's nominal area and must stack correctly.
+
+Nice to have: Slightly oblique viewing angle to give a 3D effect.
+
+* Vector Rendering
+
+Send complete geometry for each cell to the GPU. Essentially, do the same thing
+that Abendstern did when it was OpenGL-1.1-only.
+
+** Pros
+
+Works at any resolution.
+
+Smooth animations, rotation.
+
+Oblique angle comes for free.
+
+Shaders can do interesting environment-sensitive effects.
+
+Plays well with GPU memory cache.
+
+** Cons
+
+Need to re-send all geometry to the GPU every time in order to do animations
+without needing geometry shaders.
+
+Renders a lot of small, overlapping polygons.
+
+* Overhead Texture Rendering
+
+Pre-render each cell to a tile in a single texture. Rendering each cell is
+simply a matter of rendering a small number of polygons referencing that part
+of the texture.
+
+Animations handled by using the U axis of a 3D texture as a time axis.
+
+Depth handled either by drawing layers separately or mapping the alpha channel
+of the texture to depth.
+
+** Pros
+
+Less geometry to render and resubmit every frame.
+
+Can make very high detail without bogging down on geometry.
+
+** Cons
+
+Uses 3D textures, which are rather uncommon and might be slow.
+
+No oblique angle.
+
+Makes a moderately-sized texture. If each cell is 64x64 and there are 16
+animation frames, and we have 128 cell types, needs 32MB.
+
+* Discrete Animation Texture Rendering
+
+Do as above, but treat animation frames as separate tiles.
+
+** Pros
+
+No 3D textures.
+
+Cells with different needs can have different number of animation frames.
+
+** Cons
+
+No interpolation between animation frames.
+
+* Oblique Texture Rendering
+
+Pre-render each cell to a tile in a single texture, as with the prior option.
+However, each cell is rendered multiple times with different obliqueness.
+
+As the cell rotates, the U coordinate of a 3D texture is shifted to blend
+between the different angles. Animations are handled as entirely separate
+tiles.
+
+
+** Pros
+
+No more geometry per frame compared with the other texture option.
+
+We get the oblique angle.
+
+** Cons
+
+No ability to interpolate between animation frames.
+
+Uses 3D textures.
+
+Makes a large texture. We probably need at least 32 rotation frames (~11
+deg/frame), so for 64x64 tiles, 16 frame animations, 128 types, we need 1GB of
+video memory.
+
+* Considerations
+
+It looks like every option requires re-sending the geometry to the GPU every
+frame.
+
+Making a 1GB texture sounds like a really bad idea.
+
+OpenGL ES doesn't support 3D textures until ES 3.
+
+Texture size could be cut in half by using some form of colour indexing with
+the `GL_LUMINANCE_ALPHA` format. This would also allow some cheap shading
+effects.
+
+We can still get a partial oblique look with the overhead texture options by
+rendering the "body" as separate polygons with simple shaders.
+
+Decomposing each cell into component textures would also make it possible to
+have some feeling of depth. It could also reduce memory requirements, since
+animations could be reduced to the parts that actually animate. Static parts of
+ship geometry would *not* need to be recomputed and resent to the GPU; this
+includes elements used for rendering the ship's hull with polygons instead of
+textures to simulate depth, which could be handled entirely by the vertex
+shader.
+
+Damage is easier to handle with the texture-based options. Visual deformation
+can be accomplished easily by transforming texture coordinates; darkening
+patches can be built in to the texture if using colour indexing. (The colour
+index alone doesn't suffice since different cells have different damage, but
+certain range(s) can be handled specially.)
+
+Defining everything by geometry requires having everything available in terms
+of vertices. The texture options could be partially or even fully pre-baked.
+
+* Decision Time
+
+Multi-layer overhead textures + fake obliqueness for hull depth
