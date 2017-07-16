@@ -40,7 +40,7 @@ struct HilbertEntry {
 #[derive(Clone, Copy, Debug, Default)]
 struct HilbertOaat {
     /// The actual Hilbert coordinate.
-    coord: u32,
+    coord: u64,
     /// Whether the bits below the ones in question in the input coordinates
     /// were inverted.
     not: u32,
@@ -73,7 +73,7 @@ fn xy_to_hilbert_one_at_a_time(
 
         let rx = 0 != x & (1 << s);
         let ry = 0 != y & (1 << s);
-        out.coord += ((3 * rx as u32) ^ ry as u32) << s << s;
+        out.coord += ((3 * rx as u64) ^ ry as u64) << s << s;
 
         if !ry {
             if rx {
@@ -110,7 +110,7 @@ fn gen_hilbert_table() {
         print!("   ");
         for x in 0..(1 << STRIDE_BITS) {
             let out = xy_to_hilbert_one_at_a_time(x, y, STRIDE_BITS);
-            let val = ((out.not as u32) << 15) | ((out.swap as u32) << 14) |
+            let val = ((out.not as u64) << 15) | ((out.swap as u64) << 14) |
                 out.coord;
             print!(" 0x{:04X},", val);
             if 7 == x % 8 && x + 1 < (1 << STRIDE_BITS) {
@@ -172,8 +172,6 @@ fn xy_to_hilbert(pos: i32x4) -> u64 {
     // Deal with negative values by just offsetting everything by (1<<31) and
     // treating the vector as unsigned.
     let pos = pos - i32x4::splat(i32::MIN);
-    // Drop some precision to shave off a couple iterations
-    let pos = pos >> 2*STRIDE_BITS;
 
     let mut d = 0u64;
     // The rest of the algorithm is not really amenable to SSE, so move to
@@ -208,20 +206,21 @@ fn xy_to_hilbert(pos: i32x4) -> u64 {
 
             d += ((val  & ((1 << 2*STRIDE_BITS) - 1)) as u64) << 2*$s;
             invert_mask ^= ((val as i16 as i32) >> 31) as u32;
-            let swap_mask = (val as u32) >> 14 << STRIDE_BITS_BITS;
+            let swap_mask = (((val as u32) >> 14) & 1) << STRIDE_BITS_BITS;
             xs ^= swap_mask;
             ys ^= swap_mask;
         } }
     }
 
+    stride!(28);
     stride!(24);
     stride!(20);
     stride!(16);
     stride!(12);
     stride!( 8);
-    stride!( 4);
-    stride!( 0);
-    d
+    // Drop the last 8 bits to save a couple iterations
+
+    d >> 16 // Shift due to the precision drop above
 }
 
 pub fn hilbert_sort(array: &mut [CommonObject]) {
@@ -231,6 +230,8 @@ pub fn hilbert_sort(array: &mut [CommonObject]) {
 #[cfg(test)]
 mod test {
     use test::{Bencher, black_box};
+
+    use proptest;
 
     use physics::common_object::UnpackedCommonObject;
     use super::*;
@@ -247,5 +248,19 @@ mod test {
     #[bench]
     fn bench_xy_to_hilbert(b: &mut Bencher) {
         b.iter(|| xy_to_hilbert(black_box(i32x4::splat(65536))));
+    }
+
+    proptest! {
+        #[test]
+        fn fast_hilbert_matches_slow(
+            x in proptest::num::u32::ANY,
+            y in proptest::num::u32::ANY
+        ) {
+            assert_eq!(
+                xy_to_hilbert_one_at_a_time(x >> 8, y >> 8, 32).coord,
+                xy_to_hilbert(i32x4::new(
+                    (x as i32).wrapping_add(i32::MIN),
+                    (y as i32).wrapping_add(i32::MIN), 0, 0)));
+        }
     }
 }
