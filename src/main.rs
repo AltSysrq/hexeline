@@ -30,6 +30,7 @@ extern crate test;
 
 #[cfg(test)] #[macro_use] extern crate proptest;
 
+use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::io::{self, Write};
 
@@ -91,12 +92,15 @@ fn main() {
                   *const std::os::raw::c_void);
 
     unsafe {
+        unsafe fn get_string(val: GLenum) -> &'static CStr {
+            CStr::from_ptr(gl::GetString(val) as *const c_char)
+        }
+
         info!("GL Version: {} by {}",
-              CStr::from_ptr(gl::GetString(gl::VERSION)).to_string_lossy(),
-              CStr::from_ptr(gl::GetString(gl::VENDOR)).to_string_lossy());
+              get_string(gl::VERSION).to_string_lossy(),
+              get_string(gl::VENDOR).to_string_lossy());
         info!("GLSL Version: {}",
-              CStr::from_ptr(gl::GetString(gl::SHADING_LANGUAGE_VERSION))
-              .to_string_lossy());
+              get_string(gl::SHADING_LANGUAGE_VERSION).to_string_lossy());
     }
 
     unsafe {
