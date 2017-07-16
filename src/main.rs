@@ -101,6 +101,8 @@ fn main() {
               get_string(gl::VENDOR).to_string_lossy());
         info!("GLSL Version: {}",
               get_string(gl::SHADING_LANGUAGE_VERSION).to_string_lossy());
+        info!("GL Renderer: {}",
+              get_string(gl::RENDERER).to_string_lossy());
     }
 
     unsafe {
