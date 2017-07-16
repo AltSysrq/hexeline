@@ -91,19 +91,19 @@ fn main() {
     gl::load_with(|s| sdl_video.gl_get_proc_address(s) as
                   *const std::os::raw::c_void);
 
-    unsafe {
-        unsafe fn get_string(val: GLenum) -> &'static CStr {
+    fn get_string(val: GLenum) -> &'static CStr {
+        unsafe {
             CStr::from_ptr(gl::GetString(val) as *const c_char)
         }
-
-        info!("GL Version: {} by {}",
-              get_string(gl::VERSION).to_string_lossy(),
-              get_string(gl::VENDOR).to_string_lossy());
-        info!("GLSL Version: {}",
-              get_string(gl::SHADING_LANGUAGE_VERSION).to_string_lossy());
-        info!("GL Renderer: {}",
-              get_string(gl::RENDERER).to_string_lossy());
     }
+
+    info!("GL Version: {} by {}",
+          get_string(gl::VERSION).to_string_lossy(),
+          get_string(gl::VENDOR).to_string_lossy());
+    info!("GLSL Version: {}",
+          get_string(gl::SHADING_LANGUAGE_VERSION).to_string_lossy());
+    info!("GL Renderer: {}",
+          get_string(gl::RENDERER).to_string_lossy());
 
     unsafe {
         gl!(Viewport,
