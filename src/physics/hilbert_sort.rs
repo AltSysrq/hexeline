@@ -21,20 +21,9 @@ use simd::*;
 use physics::common_object::CommonObject;
 
 const STRIDE_BITS_BITS: u32 = 2;
+/// The number of bits the fast `xy_to_hilbert` implementation handles per
+/// stride. This must be a power of two.
 const STRIDE_BITS: u32 = 1 << STRIDE_BITS_BITS;
-
-/// Precalculated information for a single stride for Hilbert coordinate
-/// conversion.
-struct HilbertEntry {
-    /// Amount to add to the accumulated coordinate. `2 * STRIDE_BITS` bits are
-    /// set.
-    addend: u8,
-    /// Control information. The low `STRIDE_BITS` bits are to be shifted into
-    /// the current stride and XORed with the coordinates. All bits below the
-    /// current stride are to be XORed with bit 7. If bit 6 is set, the X and Y
-    /// coordinates are to be swapped.
-    control: u8,
-}
 
 /// Output from `xy_to_hilbert_one_at_a_time`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -43,7 +32,7 @@ struct HilbertOaat {
     coord: u64,
     /// Whether the bits below the ones in question in the input coordinates
     /// were inverted.
-    not: u32,
+    not: bool,
     /// Whether the input coordinates were net swapped at the end of the
     /// function.
     swap: bool,
@@ -136,6 +125,8 @@ fn gen_hilbert_table() {
 ///
 /// If bit 14 is set, the X and Y coordinates should be swapped before the next
 /// iteration.
+///
+/// This table can be generated with the `gen_hilbert_table()` function.
 static HILBERT_TABLE: [u16;256] = [
     0x0000, 0x4001, 0xC00E, 0x000F, 0x4010, 0xC013, 0x0014, 0x4015,
     0xC0EA, 0x00EB, 0x40EC, 0xC0EF, 0x00F0, 0x40F1, 0xC0FE, 0x00FF,
