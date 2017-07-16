@@ -136,7 +136,7 @@ pub fn hilbert_sort(array: &mut [CommonObject]) {
 
 #[cfg(test)]
 mod test {
-    use test::Bencher;
+    use test::{Bencher, black_box};
 
     use physics::common_object::UnpackedCommonObject;
     use super::*;
@@ -148,5 +148,10 @@ mod test {
                 a: i * 256, .. UnpackedCommonObject::default()
             }.pack()).collect();
         b.iter(|| hilbert_sort(&mut data));
+    }
+
+    #[bench]
+    fn bench_xy_to_hilbert(b: &mut Bencher) {
+        b.iter(|| xy_to_hilbert(black_box(i32x4::splat(65536))));
     }
 }
