@@ -89,8 +89,12 @@ fn xy_to_hilbert_one_at_a_time(
                 // `s` anywhere after this. Below that point, all bits on the
                 // LHS of the subtraction are 1. This means that we're really
                 // just XORing the coordinates with `(1 << s) - 1`.
-                x ^= (1 << s) - 1;
-                y ^= (1 << s) - 1;
+                //
+                // But also, since we don't care about the bits above `s`, we
+                // don't even need to do that; we can just invert the whole
+                // coordinate value.
+                x = !x;
+                y = !y;
                 out.not = !out.not;
             }
 
