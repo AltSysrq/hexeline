@@ -36,6 +36,7 @@ use std::io::{self, Write};
 
 use gl::types::*;
 
+mod intext;
 mod simdext;
 #[macro_use]
 mod graphic;
