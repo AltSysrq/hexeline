@@ -88,7 +88,7 @@ fn xy_to_hilbert(pos: i32x4) -> u64 {
     macro_rules! xy2d {
         ($s:expr) => {
             let r = pos & n;
-            let r_mask: i32x4 = r << (32 - $s) >> $s;
+            let r_mask: i32x4 = r << (31 - $s) >> 31;
             d += ((3 * r.extract(0) as u64) ^ r.extract(1) as u64) << $s;
 
             let pos_inverted = n1 - pos;
