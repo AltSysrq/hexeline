@@ -42,6 +42,7 @@ use arrayvec::ArrayVec;
 use simd::*;
 use smallvec::{Array, SmallVec};
 
+use intext::*;
 use physics::common_object::*;
 use physics::coords::*;
 use physics::xform::Affine2dH;
@@ -236,6 +237,61 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
+    /// Computes an upper bound on the collision radius of this object from the
+    /// centre of gravity.
+    pub fn calc_radius(&self) -> u32 {
+        // Sacrifice a bit of precision to avoid overflow
+        // Dropping 4 bits means we can support a max distance of 2**(15+4) =
+        // 2**19 (8 screens, far more than we'll ever need) rather than just
+        // 2**15 (half a screen). We just need to adjust the final calculation
+        // to be a bit more conservative.
+        const SHIFT: u8 = 4;
+
+        let header = self.header();
+        let offset = header.offset().redundant() >> SHIFT;
+        let mut max_dist = 0;
+
+        // Search for the cell which is the farthest from the centre of
+        // gravity. It could be in any row, so we must scan all the rows.
+        for row in 0..(1 << header.rows()) {
+            let col_off = unsafe { self.col_offset_unchecked(row) };
+
+            let mut first_col = None;
+            let mut last_col = None;
+
+            // In any row, the cell with the greatest distance is either the
+            // left-most or the right-most, so find the first and last
+            // populated cells. This could be made more efficient if needed;
+            // for now, optimise for simplicity.
+            for col in 0..(1 << header.pitch()) {
+                if self.is_populated(row as i16 + header.row_offset(),
+                                     col as i16 + col_off) {
+                    last_col = Some(col as i32 + col_off as i32);
+                    if first_col.is_none() { first_col = last_col; }
+                }
+            }
+
+            if let (Some(first_col), Some(last_col)) = (first_col, last_col) {
+                let first_pos = Vhs(row as i32 + header.row_offset() as i32,
+                                    first_col).redundant()
+                    << (CONTINUOUS_TO_CELL_SHIFT - SHIFT);
+                let last_pos = Vhs(row as i32 + header.row_offset() as i32,
+                                   last_col).redundant()
+                    << (CONTINUOUS_TO_CELL_SHIFT - SHIFT);
+                let first_pos = first_pos + offset;
+                let last_pos = last_pos + offset;
+                max_dist = max(first_pos.nsw_l2_squared(),
+                               max(last_pos.nsw_l2_squared(),
+                                   max_dist));
+            }
+        }
+
+        // Compute actual distance, then round up the precision lost by
+        // `SHIFT`, and add a cell radius to account for the cell coordinate
+        // being the centre rather than the edge.
+        ((max_dist.sqrt_up() + 1) << SHIFT) + CELL_RADIUS as u32
+    }
+
     /// Compare two composites for collisions.
     ///
     /// `self_inverse_rot_xform` is the value of
@@ -245,7 +301,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     /// the vector is filled.
     ///
     /// Note that this operation is not commutative since the cell collision
-    /// check is only approximate.
+    /// check is only approximate and due to precision limitations.
     pub fn test_composite_collision<R : Borrow<[i32x4]>>(
         &self, self_obj: CommonObject,
         that: &CompositeObject<R>, that_obj: CommonObject,

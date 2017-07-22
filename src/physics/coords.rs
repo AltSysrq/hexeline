@@ -240,7 +240,7 @@ use simdext::*;
 pub const CELL_RADIUS_SHIFT: u8 = 8;
 /// The  distance from the centre of a cell to any of its vertices.
 ///
-/// An outer radius of 512 means that the outer diameter is 1024, or 1/64th of
+/// An outer radius of 256 means that the outer diameter is 512, or 1/128th of
 /// a screen width.
 pub const CELL_RADIUS: i32 = 1 << CELL_RADIUS_SHIFT;
 /// The distance from the centre of a cell to the centre of one of the edges.
@@ -328,6 +328,14 @@ impl<S : Space> RedundantVector<S> {
     #[inline(always)]
     pub fn dual(self) -> DualVector<S> {
         self.single().dual()
+    }
+
+    /// Returns the L2 length of this vector, squared.
+    ///
+    /// Returns no particular value if this value would overflow an i32.
+    #[inline(always)]
+    pub fn nsw_l2_squared(self) -> u32 {
+        (self.repr() * self.repr()).hsum_3() as u32
     }
 }
 
