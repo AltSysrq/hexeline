@@ -214,10 +214,10 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
             let mut rg = (hex.1 * 16) as u8;
             let mut b = (hex.0 * 16) as u8;
 
-            if (hexa.a() & physics::coords::CELL_COORD_MASK) <= 32 {
+            if (hexa.a() & CELL_HEX_MASK) <= 32 {
                 rg ^= 255;
             }
-            if (hexa.b() & physics::coords::CELL_COORD_MASK) <= 32 {
+            if (hexa.b() & CELL_HEX_MASK) <= 32 {
                 b ^= 255;
             }
 
@@ -242,7 +242,7 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
                                  mouse_dist.c()) -
                 min(min(mouse_dist.a(), mouse_dist.b()),
                     mouse_dist.c());
-            if mouse_dist.abs() <= CELL_RADIUS*2 {
+            if mouse_dist.abs() <= CELL_HEX_SIZE {
                 r = (Wrapping(r) + Wrapping(128)).0;
             }
 

@@ -79,26 +79,21 @@ get something like this:
 |      \
 |       \
 v        *------------> +A
-+Y      / ___________      \
-       / /     |     \     |
-      / /      |      \    | CELL_H
-     / /       |       \   |
-    v /_________________\  /
++Y      / ___________
+       / /     |     \
+      / /      |      \
+     / /       |       \
+    v /_________________\
    +B \        |        /
        \       |       /
         \      |      /
-      |  \_____|_____/
-      |
-      |        \____/ CELL_CORNER
-      \________/
-
-      CELL_RADIUS
+         \_____|_____/
 ```
 
 Every cell is indexed by an (A,B,C) coordinate where all axes are integer
-multiples of `2*CELL_RADIUS`. This coordinate is the centre of the hexagon.
-Since C can be trivially derived from A and B, we can store hexagons in a
-two-dimensional array addressed directly by the (A,B) pair.
+multiples of `1 << CELL_HEX_SHIFT`. This coordinate is the centre of the
+hexagon. Since C can be trivially derived from A and B, we can store hexagons
+in a two-dimensional array addressed directly by the (A,B) pair.
 
 Transforming a 2-space point to hex-space is a simple affine transform. We
 derive it here long-hand. `k` is a scaling factor we'll address later.
@@ -236,25 +231,36 @@ use std::ops;
 use simd::*;
 use simdext::*;
 
-/// The amount to left-shift hexagonal coordinates 1 by to get `CELL_RADIUS`.
-pub const CELL_RADIUS_SHIFT: u8 = 8;
-/// The  distance from the centre of a cell to any of its vertices.
+/// The power of two dictating the cell size.
 ///
-/// An outer radius of 256 means that the outer diameter is 512, or 1/128th of
-/// a screen width.
-pub const CELL_RADIUS: i32 = 1 << CELL_RADIUS_SHIFT;
-/// The distance from the centre of a cell to the centre of one of the edges.
+/// A hexagon is centred on every (A,B,C) triple where all coordinates are even
+/// multiples of `(1 << CELL_HEX_SHIFT)`.
 ///
-pub const CELL_H: i32 = CELL_RADIUS * 866_026 / 1_000_000;
-/// The distance from the centre of a cell edge to the vertex on either side.
-pub const CELL_CORNER: i32 = CELL_RADIUS / 2;
-
-/// The amount to right-shift hexagonal coordinates to go from continuous
-/// coordinate to containing cell coordinate.
-pub const CONTINUOUS_TO_CELL_SHIFT: u8 = CELL_RADIUS_SHIFT + 1;
-/// Bitmask to position continuous hexagonal coordinates over the origin of the
-/// containing cell.
-pub const CELL_COORD_MASK: i32 = (1 << CONTINUOUS_TO_CELL_SHIFT) - 1;
+/// A value of 9 means there is one column of hexagons every 512 A units, or
+/// every 418 X units; i.e., 104.5 columns per screen width.
+pub const CELL_HEX_SHIFT: u8 = 9;
+/// Mask to extract the fractional digits from a hexagonal coordinate on a cell
+/// grid.
+pub const CELL_HEX_MASK: i32 = (1 << CELL_HEX_SHIFT) - 1;
+/// The displacement along one hexagonal axis equal to "1.0" on the cell grid
+/// system.
+pub const CELL_HEX_SIZE: i32 = 1 << CELL_HEX_SHIFT;
+/// The L-infinity distance in 3D hexagonal space from the centre of a cell to
+/// the centre of one of its edges.
+pub const CELL_HEX_LINF_EDGE: i32 = CELL_HEX_SIZE / 2;
+/// The L-infinity distance in 3D hexagonal space from the centre of a cell to
+/// one of its vertices.
+pub const CELL_HEX_LINF_VERTEX: i32 = CELL_HEX_SIZE * 2 / 3;
+/// The L2 distance (in either 3D coordinate system or 2D cartesian) from the
+/// centre of a cell to the centre of one of its edges.
+///
+/// (0.5,0,-0.5) => sqrt(2/4) => 1/sqrt(2)
+pub const CELL_L2_EDGE: i32 = CELL_HEX_SIZE * 1_000_000 / 1_414_214;
+/// The L2 distance (in either 3D coordinate system or 2D cartesian) from the
+/// centre of a cell to one of its vertices.
+///
+/// (2/3,-1/3,-1/3) => sqrt(4/9+2/9) => sqrt(6/9) => sqrt(6)/3
+pub const CELL_L2_VERTEX: i32 = CELL_HEX_SIZE * 816_497 / 1_000_000;
 
 pub trait Space {
     fn coord_prefix() -> char;
@@ -535,11 +541,11 @@ impl Vhs {
         // Calculate our rounding options. Note that for A we round up in the last
         // two lanes, where for B we round up in the odd numbered lanes.
         let rounded_a =
-            (base_a + i32x4::new(0, 0, CELL_COORD_MASK+1, CELL_COORD_MASK+1)) &
-            i32x4::splat(!CELL_COORD_MASK);
+            (base_a + i32x4::new(0, 0, CELL_HEX_MASK+1, CELL_HEX_MASK+1)) &
+            i32x4::splat(!CELL_HEX_MASK);
         let rounded_b =
-            (base_b + i32x4::new(0, CELL_COORD_MASK+1, 0, CELL_COORD_MASK+1)) &
-            i32x4::splat(!CELL_COORD_MASK);
+            (base_b + i32x4::new(0, CELL_HEX_MASK+1, 0, CELL_HEX_MASK+1)) &
+            i32x4::splat(!CELL_HEX_MASK);
         // Compute the residue for all for options, as well as for C
         let a_residue = rounded_a - base_a;
         let b_residue = rounded_b - base_b;
@@ -561,7 +567,7 @@ impl Vhs {
         // SSE4.1. We can accomplish (a <= b) with ((a - b - 1) >> 31) though
         // (which also gets us a convenient bitmask). Though here we only care
         // about the sign bit, so the >> 31 is elided.
-        let valid_mask = residue - i32x4::splat(CELL_COORD_MASK + 2);
+        let valid_mask = residue - i32x4::splat(CELL_HEX_MASK + 2);
 
         // Efficiently get a 4-bit value indicating which lanes of valid_mask have
         // their sign bit set (i.e., are valid solutions).
@@ -583,7 +589,7 @@ impl Vhs {
         let a_off = (valid_shuf_tab_a >> shuf_ix) as i32 & 1;
         let b_off = (valid_shuf_tab_b >> shuf_ix) as i32 & 1;
 
-        let coord = self.repr() >> CONTINUOUS_TO_CELL_SHIFT;
+        let coord = self.repr() >> CELL_HEX_SHIFT;
         (coord.extract(0) + a_off, coord.extract(1) + b_off)
     }
 
@@ -596,11 +602,9 @@ impl Vhs {
     #[inline(always)]
     pub fn to_grid_overlap(self) -> (i32x4, i32x4) {
         let (a, b, residue) = self.to_grid();
-        // Times 4 rather than 2 because we have (max-min) residue, which
-        // reaches twice the radius at the actual radius.
-        let valid_mask = residue - i32x4::splat(4 * CELL_RADIUS);
-        let a: i32x4 = a >> CONTINUOUS_TO_CELL_SHIFT;
-        let b: i32x4 = b >> CONTINUOUS_TO_CELL_SHIFT;
+        let valid_mask = residue - i32x4::splat(2 * CELL_HEX_SIZE);
+        let a: i32x4 = a >> CELL_HEX_SHIFT;
+        let b: i32x4 = b >> CELL_HEX_SHIFT;
         let mask = bool32ix4::from_repr(valid_mask >> 31);
         let absent = i32x4::splat(-32768);
         (mask.select(a, absent), mask.select(b, absent))
@@ -623,7 +627,7 @@ impl Vhd {
         x = sqrt(3)/sqrt(2) * a
         y = 1/sqrt(2) * a + sqrt(2) * b
 
-        | x |   | 3/2        0       |
+        | x |   | sqrt(3/2)  0       |
         | y | = | 1/sqrt(2)  sqrt(2) |
         */
         let prod = self.repr().mulfp(
@@ -776,7 +780,7 @@ mod test {
             let centre = Vhs(a, b).redundant();
 
             let mut expected_overlap = HashSet::new();
-            let diam = 1 << CONTINUOUS_TO_CELL_SHIFT;
+            let diam = 1 << CELL_HEX_SHIFT;
             let incr = 16;
             let mut a_off = -diam;
             while a_off <= diam {
@@ -788,7 +792,7 @@ mod test {
                         min(min(off.a(), off.b()), off.c());
                     // Be conservative about what cells we sample to avoid edge
                     // cases
-                    if residue < CELL_RADIUS {
+                    if residue < CELL_HEX_SIZE / 2 {
                         expected_overlap.insert(point.single().to_index());
                     }
 

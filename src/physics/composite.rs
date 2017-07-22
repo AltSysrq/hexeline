@@ -274,10 +274,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             if let (Some(first_col), Some(last_col)) = (first_col, last_col) {
                 let first_pos = Vhs(row as i32 + header.row_offset() as i32,
                                     first_col).redundant()
-                    << (CONTINUOUS_TO_CELL_SHIFT - SHIFT);
+                    << (CELL_HEX_SHIFT - SHIFT);
                 let last_pos = Vhs(row as i32 + header.row_offset() as i32,
                                    last_col).redundant()
-                    << (CONTINUOUS_TO_CELL_SHIFT - SHIFT);
+                    << (CELL_HEX_SHIFT - SHIFT);
                 let first_pos = first_pos + offset;
                 let last_pos = last_pos + offset;
                 max_dist = max(first_pos.nsw_l2_squared(),
@@ -289,7 +289,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Compute actual distance, then round up the precision lost by
         // `SHIFT`, and add a cell radius to account for the cell coordinate
         // being the centre rather than the edge.
-        ((max_dist.sqrt_up() + 1) << SHIFT) + CELL_RADIUS as u32
+        ((max_dist.sqrt_up() + 1) << SHIFT) + CELL_L2_VERTEX as u32
     }
 
     /// Compare two composites for collisions.
@@ -334,7 +334,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let that_bounds_self_grid = that_cog_self_grid.repr() +
             i32x4::new(-that_radius, -that_radius, that_radius, that_radius);
         let that_bounds_self_grid =
-            (that_bounds_self_grid >> CONTINUOUS_TO_CELL_SHIFT) +
+            (that_bounds_self_grid >> CELL_HEX_SHIFT) +
             i32x4::new(-1, -1, 1, 1);
 
         // Now determine the position of our (0,0) cell within `that`'s grid.
@@ -349,9 +349,9 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Determine the displacement within `that`'s grid for moving (+1,0)
         // and (0,+1) in our own cell grid
         let grid_displacement = that_inverse_rot_xform *
-            Vhl(1 << CONTINUOUS_TO_CELL_SHIFT,
+            Vhl(1 << CELL_HEX_SHIFT,
                 0, 0,
-                1 << CONTINUOUS_TO_CELL_SHIFT);
+                1 << CELL_HEX_SHIFT);
 
         // Determine the first and last rows to scan, and start tracking the
         // base coordinate for that row.
