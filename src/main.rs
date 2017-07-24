@@ -13,7 +13,8 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-#![feature(test, platform_intrinsics, cfg_target_feature)]
+#![feature(test, platform_intrinsics, cfg_target_feature,
+           conservative_impl_trait)]
 #![allow(dead_code)]
 
 extern crate arrayvec;

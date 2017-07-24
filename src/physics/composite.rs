@@ -118,7 +118,8 @@ impl fmt::Debug for CompositeHeader {
     }
 }
 
-pub type CollisionSet = ArrayVec<[[(i16,i16);2];16]>;
+pub const COLLISION_SET_SIZE: usize = 16;
+pub type CollisionSet = ArrayVec<[[(i16,i16);2];COLLISION_SET_SIZE]>;
 
 /// The common prefix data shared by all composite objects.
 ///
@@ -196,13 +197,51 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     #[inline(always)]
     pub fn is_in_bounds(&self, a: i16, b: i16) -> bool {
         let header = self.header();
-        let row = (a - header.row_offset()) as usize;
+        let row = (a as i32 - header.row_offset() as i32) as usize;
         if row >= (1 << header.rows()) { return false; }
 
         let col_offset = unsafe { self.col_offset_unchecked(row) };
 
-        let col = (b - col_offset) as usize;
+        let col = (b as i32 - col_offset as i32) as usize;
         col < (1 << header.pitch())
+    }
+
+    /// Returns an iterator over the logical row indices in this composite.
+    pub fn rows(&self) -> impl Iterator<Item = i16> {
+        let row_offset = self.header().row_offset() as i32;
+        (0..(1i32 << self.header().rows())).map(
+            move |row| (row + row_offset) as i16)
+    }
+
+    /// Returns the logical index of the first column in the given logical row.
+    pub fn col_offset(&self, row: i16) -> i16 {
+        let phys_row = (row as i32 - self.header().row_offset() as i32)
+            as usize;
+        assert!(phys_row <= 1 << self.header().rows());
+        unsafe {
+            self.col_offset_unchecked(phys_row)
+        }
+    }
+
+    /// Returns an iterator over the logical indices of columns in the given
+    /// logical row.
+    pub fn cols_in_row(&self, row: i16) -> impl Iterator<Item = i16> {
+        let col_offset = self.col_offset(row) as i32;
+        (0..(1i32 << self.header().pitch())).map(
+            move |col| ((col + col_offset) as i16))
+    }
+
+    /// Returns an iterator over all 2D cell indices considered "in-bounds" in
+    /// this composite.
+    pub fn indices<'a>(&'a self) -> impl 'a + Iterator<Item = (i16,i16)> {
+        self.rows().flat_map(
+            move |row| self.cols_in_row(row).map(move |col| (row, col)))
+    }
+
+    /// Returns an iterator over the logical indices of cells which are
+    /// populated in this composite.
+    pub fn cells<'a>(&'a self) -> impl 'a + Iterator<Item = (i16,i16)> {
+        self.indices().filter(move |&(row, col)| self.is_populated(row, col))
     }
 
     #[inline(always)]
@@ -339,19 +378,17 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
         // Now determine the position of our (0,0) cell within `that`'s grid.
         let that_inverse_rot_xform = Affine2dH::rotate_hex(-that_obj.theta());
+        let self_rot_xform = Affine2dH::rotate_hex(self_obj.theta());
         let origin_pos = self_obj.pos().dual() +
-            Affine2dH::rotate_hex(self_obj.theta()) *
-            self.header().offset().dual();
+            self_rot_xform * self.header().offset().dual();
         let self_origin_that_grid =
-            (that_inverse_rot_xform * origin_pos).single() -
-            that.header().offset();
+            (that_inverse_rot_xform * (origin_pos - that_obj.pos().dual()))
+            .single() - that.header().offset();
 
         // Determine the displacement within `that`'s grid for moving (+1,0)
         // and (0,+1) in our own cell grid
-        let grid_displacement = that_inverse_rot_xform *
-            Vhl(1 << CELL_HEX_SHIFT,
-                0, 0,
-                1 << CELL_HEX_SHIFT);
+        let grid_displacement = that_inverse_rot_xform * self_rot_xform *
+            Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE);
 
         // Determine the first and last rows to scan, and start tracking the
         // base coordinate for that row.
@@ -529,12 +566,89 @@ impl<A : Array<Item = i32x4>> CompositeObject<SmallVec<A>> {
     }
 }
 
+impl<T : Borrow<[i32x4]>> fmt::Debug for CompositeObject<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let header = self.header();
+
+        let mut s = f.debug_struct("CompositeObject");
+        s.field("header", &header);
+
+        for row in self.rows() {
+            if self.cols_in_row(row).any(|col| self.is_populated(row, col)) {
+                s.field(&format!("row[{}]", row), &DebugRow(self, row));
+            }
+        }
+        s.finish()
+    }
+}
+
+struct DebugRow<T>(T, i16);
+impl<'a, T : Borrow<[i32x4]>> fmt::Debug
+for DebugRow<&'a CompositeObject<T>> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let logical_row = self.1;
+        let mut list = f.debug_list();
+        for col in self.0.cols_in_row(logical_row) {
+            if self.0.is_populated(logical_row, col) {
+                list.entry(&col);
+            }
+        }
+        list.finish()
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use std::collections::HashSet;
+    use std::num::Wrapping;
+
     use proptest;
-    use proptest::strategy::Strategy;
+    use proptest::strategy::{BoxedStrategy, Strategy};
 
     use super::*;
+
+    #[derive(Debug)]
+    struct ArbComposite {
+        common: CommonObject,
+        data: CompositeObject<SmallVec<[i32x4;32]>>,
+    }
+
+    impl ArbComposite {
+        fn cell_coord(&self, row: i16, col: i16) -> Vhd {
+            let off = self.data.header().offset() +
+                (Vhs(row as i32, col as i32) << CELL_HEX_SHIFT);
+            self.common.pos().dual() +
+                Affine2dH::rotate_hex(self.common.theta()) * off.dual()
+        }
+    }
+
+    fn arb_composite() -> BoxedStrategy<ArbComposite> {
+        (proptest::collection::btree_set(
+            (-8i16..8i16, -8i16..8i16), 1..64),
+         -16384..16384, -16384..16384,
+         proptest::num::i16::ANY,
+         -4096..4096, -4096..4096).prop_map(
+            |(cells, a, b, theta, a_offset, b_offset)| {
+                let mut ret = ArbComposite {
+                    common: UnpackedCommonObject {
+                        a, b,
+                        theta: Wrapping(theta),
+                        .. UnpackedCommonObject::default()
+                    }.pack(),
+                    data: unsafe { CompositeObject::build(
+                        UnpackedCompositeHeader {
+                            a_offset, b_offset,
+                            .. UnpackedCompositeHeader::default()
+                        }.pack(),
+                        || cells.iter().map(|&v| v))
+                    },
+                };
+                let rad = ret.data.calc_radius();
+                ret.common.set_rounded_radius(
+                    CommonObject::round_radius(rad));
+                ret
+            }).boxed()
+    }
 
     proptest! {
         #[test]
@@ -587,6 +701,74 @@ mod test {
                                  populated = {}, in_bounds = {}",
                                 a, b, pop, in_bounds);
                     }
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            cases: 256_000,
+            .. proptest::test_runner::Config::default()
+        })]
+
+        #[test]
+        fn composite_composite_collisions_roughly_correct(
+            ref lhs in arb_composite(),
+            ref rhs in arb_composite()
+        ) {
+            // For an exact solution, hexagons would collide somewhere between
+            // 2*CELL_L2_EDGE and 2*CELL_L2_VERTEX. Increase the latter by
+            // 12/10 to account for various precision loss. The former we
+            // reduce to half of what it would normally be due to the way the
+            // collision test is approximated.
+            const AGGRESSIVE_DIST: u32 = CELL_L2_VERTEX as u32 * 2 * 12/10;
+            const CONSERVATIVE_DIST: u32 = CELL_L2_EDGE as u32;
+
+            let lhs_inv_rot = Affine2dH::rotate_hex(-lhs.common.theta());
+
+            // Do a naïve n² collision check between all possible pairs.
+            // Anything within `CONSERVATIVE_DIST` MUST be detected as a
+            // collision; anything outside `AGGRESSIVE_DIST` MUST NOT be
+            // detected as a collision. Things in between may or may not be
+            // considered to collide.
+            let mut aggressive_hits = HashSet::new();
+            let mut conservative_hits = HashSet::new();
+            for (lrow, lcol) in lhs.data.cells() {
+                let lpos = lhs.cell_coord(lrow, lcol);
+                for (rrow, rcol) in rhs.data.cells() {
+                    let rpos = rhs.cell_coord(rrow, rcol);
+                    let displacement = (lpos - rpos).redundant();
+                    // Check LInf distance first since L2 distance could overflow
+                    if displacement.linf() > AGGRESSIVE_DIST { continue; }
+
+                    let l2d = displacement.nsw_l2_squared();
+                    if l2d < CONSERVATIVE_DIST * CONSERVATIVE_DIST {
+                        conservative_hits.insert([(lrow, lcol), (rrow, rcol)]);
+                    }
+                    if l2d <= AGGRESSIVE_DIST * AGGRESSIVE_DIST {
+                        aggressive_hits.insert([(lrow, lcol), (rrow, rcol)]);
+                    }
+                }
+            }
+
+            let result = lhs.data.test_composite_collision(
+                lhs.common, &rhs.data, rhs.common,
+                lhs_inv_rot);
+            println!("Conservative hits: {:?}", conservative_hits);
+            println!("Aggressive hits: {:?}", aggressive_hits);
+            println!("Actual hits: {:?}", result);
+            for item in &result {
+                assert!(aggressive_hits.contains(item),
+                        "Detected {:?} as a collision, but they should not \
+                         have collided", item);
+            }
+            // Only check that all conservative items were found if the result
+            // array was not saturated
+            if result.len() < COLLISION_SET_SIZE {
+                for item in &conservative_hits {
+                    assert!(result.iter().any(|i| i == item),
+                            "Failed to detect {:?} as a collision", item);
                 }
             }
         }

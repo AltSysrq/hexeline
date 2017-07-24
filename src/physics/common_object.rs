@@ -277,6 +277,12 @@ impl CommonObject {
 
         CommonObject { p: new_pos, d: new_dynamics }
     }
+
+    /// Format `radius` as a suitable value for `rounded_radius`.
+    pub fn round_radius(radius: u32) -> u8 {
+        debug_assert!(radius <= 255 << ROUNDED_RADIUS_SHIFT);
+        ((radius + ROUNDED_RADIUS_FACTOR - 1) >> ROUNDED_RADIUS_SHIFT) as u8
+    }
 }
 
 impl UnpackedCommonObject {

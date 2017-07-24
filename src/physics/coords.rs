@@ -259,7 +259,7 @@ pub const CELL_L2_EDGE: i32 = CELL_HEX_SIZE * 1_000_000 / 1_414_214;
 /// The L2 distance (in either 3D coordinate system or 2D cartesian) from the
 /// centre of a cell to one of its vertices.
 ///
-/// (2/3,-1/3,-1/3) => sqrt(4/9+2/9) => sqrt(6/9) => sqrt(6)/3
+/// (2/3,-1/3,-1/3) => sqrt(4/9+2/9) => sqrt(6/9) => sqrt(2/3)
 pub const CELL_L2_VERTEX: i32 = CELL_HEX_SIZE * 816_497 / 1_000_000;
 
 pub trait Space {
@@ -334,6 +334,21 @@ impl<S : Space> RedundantVector<S> {
     #[inline(always)]
     pub fn dual(self) -> DualVector<S> {
         self.single().dual()
+    }
+
+    /// Returns the L1 length of this vector.
+    #[inline(always)]
+    pub fn l1(self) -> u32 {
+        self.repr().abs().hsum_3() as u32
+    }
+
+    /// Returns the L-infinity length of this vector.
+    #[inline(always)]
+    pub fn linf(self) -> u32 {
+        use std::cmp::max;
+
+        let a = self.repr().abs().to_u32();
+        max(max(a.extract(0), a.extract(1)), a.extract(2))
     }
 
     /// Returns the L2 length of this vector, squared.
