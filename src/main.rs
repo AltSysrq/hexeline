@@ -31,6 +31,7 @@ extern crate test;
 
 #[cfg(test)] #[macro_use] extern crate proptest;
 
+use std::env;
 use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::io::{self, Write};
@@ -42,6 +43,7 @@ mod simdext;
 #[macro_use]
 mod graphic;
 mod physics;
+mod rpn;
 
 fn main() {
     fn die<T>(message: String) -> T {
@@ -59,6 +61,11 @@ fn main() {
     }
 
     env_logger::init().expect("Failed to initialise logging");
+
+    if Some("rpn") == env::args().nth(1).as_ref().map(|s| &**s) {
+        rpn::run_rpn();
+        return;
+    }
 
     let sdl_context = sdl2::init().unwrap_or_else(die);
     let _sdl_audio = sdl_context.audio().unwrap_or_else(die);
