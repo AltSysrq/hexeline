@@ -625,7 +625,7 @@ mod test {
     fn arb_composite() -> BoxedStrategy<ArbComposite> {
         (proptest::collection::btree_set(
             (-8i16..8i16, -8i16..8i16), 1..64),
-         -16384..16384, -16384..16384,
+         -65536..65536, -65536..65536,
          proptest::num::i16::ANY,
          -4096..4096, -4096..4096).prop_map(
             |(cells, a, b, theta, a_offset, b_offset)| {
@@ -708,7 +708,7 @@ mod test {
 
     proptest! {
         #![proptest_config(proptest::test_runner::Config {
-            cases: 256_000,
+            cases: 65536,
             .. proptest::test_runner::Config::default()
         })]
 
@@ -719,10 +719,10 @@ mod test {
         ) {
             // For an exact solution, hexagons would collide somewhere between
             // 2*CELL_L2_EDGE and 2*CELL_L2_VERTEX. Increase the latter by
-            // 12/10 to account for various precision loss. The former we
+            // 13/10 to account for various precision loss. The former we
             // reduce to half of what it would normally be due to the way the
             // collision test is approximated.
-            const AGGRESSIVE_DIST: u32 = CELL_L2_VERTEX as u32 * 2 * 12/10;
+            const AGGRESSIVE_DIST: u32 = CELL_L2_VERTEX as u32 * 2 * 13/10;
             const CONSERVATIVE_DIST: u32 = CELL_L2_EDGE as u32;
 
             let lhs_inv_rot = Affine2dH::rotate_hex(-lhs.common.theta());
@@ -755,9 +755,6 @@ mod test {
             let result = lhs.data.test_composite_collision(
                 lhs.common, &rhs.data, rhs.common,
                 lhs_inv_rot);
-            println!("Conservative hits: {:?}", conservative_hits);
-            println!("Aggressive hits: {:?}", aggressive_hits);
-            println!("Actual hits: {:?}", result);
             for item in &result {
                 assert!(aggressive_hits.contains(item),
                         "Detected {:?} as a collision, but they should not \
