@@ -123,9 +123,9 @@ pub struct UnpackedCommonObject {
     pub b: i32,
     /// The rotation.
     pub theta: Angle,
-    /// The collision radius of the object (i.e., the maximum distance of any
-    /// collideable point from the nominal (A,B) coordinate), divided by
-    /// ROUNDED_RADIUS_FACTOR, rounded up.
+    /// The collision radius of the object (i.e., the maximum displacement
+    /// along any *one* hexagonal axis to any collideable part of the object),
+    /// divided by ROUNDED_RADIUS_FACTOR, rounded up.
     pub rounded_radius: u8,
     /// No two objects with the same non-zero collision group will collide with
     /// each other.
@@ -278,7 +278,28 @@ impl CommonObject {
         CommonObject { p: new_pos, d: new_dynamics }
     }
 
+    /// Translate the given l2 distance into a (non-rounded) object radius.
+    #[inline(always)]
+    pub fn radius_of_l2(l2: u32) -> u32 {
+        // The maximum contribution of any single hexagonal axis to the L2
+        // distance is given by
+        //
+        //       |a|
+        // --------------
+        // sqrt(a²+b²+c²)
+        //
+        // Since c=-a-b,
+        //
+        //       |a|
+        // -----------------
+        // sqrt(2a²+2b²-2ab)
+        //
+        // The maximum value of this function is sqrt(2/3)
+        ((l2 as u64 * 53570) >> 16) as u32
+    }
+
     /// Format `radius` as a suitable value for `rounded_radius`.
+    #[inline(always)]
     pub fn round_radius(radius: u32) -> u8 {
         debug_assert!(radius <= 255 << ROUNDED_RADIUS_SHIFT);
         ((radius + ROUNDED_RADIUS_FACTOR - 1) >> ROUNDED_RADIUS_SHIFT) as u8

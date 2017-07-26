@@ -276,8 +276,9 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
-    /// Computes an upper bound on the collision radius of this object from the
-    /// centre of gravity.
+    /// Computes an upper bound on the collision radius of this object (as per
+    /// `CommonObject::rounded_radius`, but not yet rounded) from the centre of
+    /// gravity.
     pub fn calc_radius(&self) -> u32 {
         // Sacrifice a bit of precision to avoid overflow
         // Dropping 4 bits means we can support a max distance of 2**(15+4) =
@@ -328,7 +329,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Compute actual distance, then round up the precision lost by
         // `SHIFT`, and add a cell radius to account for the cell coordinate
         // being the centre rather than the edge.
-        ((max_dist.sqrt_up() + 1) << SHIFT) + CELL_L2_VERTEX as u32
+        CommonObject::radius_of_l2(
+            ((max_dist.sqrt_up() + 1) << SHIFT) + CELL_L2_VERTEX as u32)
     }
 
     /// Compare two composites for collisions.
