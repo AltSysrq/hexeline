@@ -329,12 +329,23 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     ///
     /// Note that this operation is not commutative since the cell collision
     /// check is only approximate and due to precision limitations.
+    ///
+    /// `dst` must be an empty `CollisionSet`. It will be populated by this
+    /// call. It is not returned as a normal return value as this would incur a
+    /// 130-byte memcpy on every call. (In the case where the two objects do
+    /// not have any candidate cell pairs, this makes a 4x performance
+    /// difference, and a ~2x performance difference when there is only one
+    /// candidate cell pair.) This does slow down cases where there are
+    /// actually collisions by ~50% worst case, but this is OK since collisions
+    /// are rare.
     #[inline(never)]
     pub fn test_composite_collision<R : Borrow<[i32x4]>>(
-        &self, self_obj: CommonObject,
+        &self, dst: &mut CollisionSet, self_obj: CommonObject,
         that: &CompositeObject<R>, that_obj: CommonObject,
         self_inverse_rot_xform: Affine2dH
-    ) -> CollisionSet {
+    ) {
+        dst.clear();
+
         // To check the collision, we first take the bounding rhombus of `that`
         // and overlay it on the grid of `self` to find candidate cells; we
         // then check each cell of `self` within that rhombus against `that` to
@@ -390,7 +401,6 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             grid_displacement.fst() * Vhs(first_row, first_row);
 
         // Scan the columns of each row for overlapping cells
-        let mut collisions = ArrayVec::new();
         let pitch = 1 << self.header().pitch();
         for row in first_row..last_row + 1 {
             let col_offset = unsafe {
@@ -417,11 +427,11 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
                                 (a as i16 as i32) == a &&
                                 (b as i16 as i32) == b
                             {
-                                if collisions.push([(row as i16, col as i16),
-                                                    (a as i16, b as i16)])
+                                if dst.push([(row as i16, col as i16),
+                                             (a as i16, b as i16)])
                                     .is_some()
                                 {
-                                    return collisions;
+                                    return;
                                 }
                             }
                         }
@@ -436,8 +446,6 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
             row_zero = row_zero + grid_displacement.fst();
         }
-
-        collisions
     }
 }
 
@@ -742,8 +750,9 @@ mod test {
                 }
             }
 
-            let result = lhs.data.test_composite_collision(
-                lhs.common, &rhs.data, rhs.common,
+            let mut result = CollisionSet::new();
+            lhs.data.test_composite_collision(
+                &mut result, lhs.common, &rhs.data, rhs.common,
                 lhs_inv_rot);
             for item in &result {
                 assert!(aggressive_hits.contains(item),
@@ -777,9 +786,13 @@ mod test {
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
 
-        b.iter(|| black_box(&composite).test_composite_collision(
-            black_box(obj), black_box(&composite), black_box(obj),
-            black_box(xform)));
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision(
+                &mut result,
+                black_box(obj), black_box(&composite), black_box(obj),
+                black_box(xform))
+        });
     }
 
     #[bench]
@@ -796,9 +809,14 @@ mod test {
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
 
-        b.iter(|| black_box(&composite).test_composite_collision(
-            black_box(obj), black_box(&composite), black_box(obj),
-            black_box(xform)));
+
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision(
+                &mut result,
+                black_box(obj), black_box(&composite), black_box(obj),
+                black_box(xform))
+        });
     }
 
     #[bench]
@@ -822,8 +840,13 @@ mod test {
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
 
-        b.iter(|| black_box(&composite).test_composite_collision(
-            black_box(obj_a), black_box(&composite), black_box(obj_b),
-            black_box(xform)));
+
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision(
+                &mut result,
+                black_box(obj_a), black_box(&composite), black_box(obj_b),
+                black_box(xform))
+        });
     }
 }
