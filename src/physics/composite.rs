@@ -288,40 +288,26 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         const SHIFT: u8 = 4;
 
         let header = self.header();
-        let offset = header.offset().redundant() >> SHIFT;
+        let offset = header.offset() >> SHIFT;
         let mut max_dist = 0;
 
         // Search for the cell which is the farthest from the centre of
         // gravity. It could be in any row, so we must scan all the rows.
-        for row in 0..(1 << header.rows()) {
-            let col_off = unsafe { self.col_offset_unchecked(row) };
+        for row in self.rows() {
+            let mut col_iter = self.cols_in_row(row).filter(
+                |&col| self.is_populated(row, col));
+            if let Some(first_col) = col_iter.next() {
+                let last_col = col_iter.last().unwrap_or(first_col);
 
-            let mut first_col = None;
-            let mut last_col = None;
-
-            // In any row, the cell with the greatest distance is either the
-            // left-most or the right-most, so find the first and last
-            // populated cells. This could be made more efficient if needed;
-            // for now, optimise for simplicity.
-            for col in 0..(1 << header.pitch()) {
-                if self.is_populated(row as i16 + header.row_offset(),
-                                     col as i16 + col_off) {
-                    last_col = Some(col as i32 + col_off as i32);
-                    if first_col.is_none() { first_col = last_col; }
-                }
-            }
-
-            if let (Some(first_col), Some(last_col)) = (first_col, last_col) {
-                let first_pos = Vhs(row as i32 + header.row_offset() as i32,
-                                    first_col).redundant()
-                    << (CELL_HEX_SHIFT - SHIFT);
-                let last_pos = Vhs(row as i32 + header.row_offset() as i32,
-                                   last_col).redundant()
-                    << (CELL_HEX_SHIFT - SHIFT);
+                let first_pos = Vhs(row as i32, first_col as i32);
+                let last_pos = Vhs(row as i32, last_col as i32);
+                let first_pos = first_pos << (CELL_HEX_SHIFT - SHIFT);
+                let last_pos = last_pos << (CELL_HEX_SHIFT - SHIFT);
                 let first_pos = first_pos + offset;
                 let last_pos = last_pos + offset;
-                max_dist = max(first_pos.nsw_l2_squared(),
-                               max(last_pos.nsw_l2_squared(),
+
+                max_dist = max(first_pos.redundant().nsw_l2_squared(),
+                               max(last_pos.redundant().nsw_l2_squared(),
                                    max_dist));
             }
         }
