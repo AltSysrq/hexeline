@@ -329,6 +329,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     ///
     /// Note that this operation is not commutative since the cell collision
     /// check is only approximate and due to precision limitations.
+    #[inline(never)]
     pub fn test_composite_collision<R : Borrow<[i32x4]>>(
         &self, self_obj: CommonObject,
         that: &CompositeObject<R>, that_obj: CommonObject,
@@ -589,6 +590,7 @@ for DebugRow<&'a CompositeObject<T>> {
 mod test {
     use std::collections::HashSet;
     use std::num::Wrapping;
+    use test::{Bencher, black_box};
 
     use proptest;
     use proptest::strategy::{BoxedStrategy, Strategy};
@@ -757,5 +759,71 @@ mod test {
                 }
             }
         }
+    }
+
+    #[bench]
+    fn bench_composite_composite_collision_1x1(b: &mut Bencher) {
+        static CELLS: &'static [(i16,i16)] = &[(0,0)];
+
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || CELLS.iter().map(|&v| v))
+        };
+        let obj = UnpackedCommonObject {
+            rounded_radius:
+                CommonObject::round_radius(composite.calc_radius()),
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let xform = Affine2dH::rotate_hex(Wrapping(0));
+
+        b.iter(|| black_box(&composite).test_composite_collision(
+            black_box(obj), black_box(&composite), black_box(obj),
+            black_box(xform)));
+    }
+
+    #[bench]
+    fn bench_composite_composite_collision_4x4(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (0..4).flat_map(|r| (0..4).map(move |c| (r, c))))
+        };
+        let obj = UnpackedCommonObject {
+            rounded_radius:
+                CommonObject::round_radius(composite.calc_radius()),
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let xform = Affine2dH::rotate_hex(Wrapping(0));
+
+        b.iter(|| black_box(&composite).test_composite_collision(
+            black_box(obj), black_box(&composite), black_box(obj),
+            black_box(xform)));
+    }
+
+    #[bench]
+    fn bench_composite_composite_collision_4x4_nonoverlapping(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+        let obj_a = UnpackedCommonObject {
+            a: -5 * CELL_L2_VERTEX, b: -5 * CELL_L2_VERTEX,
+            rounded_radius:
+                CommonObject::round_radius(composite.calc_radius()),
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let obj_b = UnpackedCommonObject {
+            a: 5 * CELL_L2_VERTEX, b: 5 * CELL_L2_VERTEX,
+            rounded_radius:
+                CommonObject::round_radius(composite.calc_radius()),
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let xform = Affine2dH::rotate_hex(Wrapping(0));
+
+        b.iter(|| black_box(&composite).test_composite_collision(
+            black_box(obj_a), black_box(&composite), black_box(obj_b),
+            black_box(xform)));
     }
 }
