@@ -312,6 +312,28 @@ impl Affine2dH {
 
         Affine2dH::from_repr(mult + mult.shuf(1, 1, 2, 2))
     }
+
+    /// Assuming this transform was produced by `rotate_hex(theta)`, compute
+    /// `rotate_hex(-theta)`.
+    #[inline(always)]
+    pub fn inv_rotate_hex(self) -> Self {
+        /*
+        cos(-θ) = cos(θ), sin(-θ) = -sin(θ)
+
+        We're given
+
+        [ cos-sin/sqrt(3)       -2sin/sqrt(3)
+          2sin/sqrt(3)          cos+sin/sqrt(3) ]
+
+        We want to get to
+
+        [ cos+sin/sqrt(3)       2sin/sqrt(3)
+          -2sin/sqrt(3)         cos-sin/sqrt(3) ]
+
+        So we can simply permute the matrix.
+        */
+        Affine2dH::from_repr(self.repr().shuf(3, 2, 1, 0))
+    }
 }
 
 impl<S : Space> ops::Mul<DualVector<S>> for Affine2d<S> {
@@ -445,6 +467,24 @@ mod test {
                      dist = {}", orig, theta.0, rot_ortho,
                     orig, theta.0, rot_hex,
                     rot_ortho.repr().dist_2L1(rot_hex.repr()));
+        }
+    }
+
+    #[test]
+    fn inv_rotate_hex() {
+        for theta in -32768i32..32768i32 {
+            let theta = Wrapping(theta as i16);
+            let expected = Affine2dH::rotate_hex(-theta).repr();
+            let actual = Affine2dH::rotate_hex(theta).inv_rotate_hex().repr();
+
+            let diff = (expected - actual).abs();
+            const SLOP: i32 = 4;
+            assert!(diff.extract(0) <= SLOP &&
+                    diff.extract(1) <= SLOP &&
+                    diff.extract(2) <= SLOP &&
+                    diff.extract(3) <= SLOP,
+                    "For theta = {}, expected {:?}, got {:?}",
+                    theta, expected, actual);
         }
     }
 

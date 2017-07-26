@@ -367,7 +367,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
         // Now determine the position of our (0,0) cell within `that`'s grid.
         let that_inverse_rot_xform = Affine2dH::rotate_hex(-that_obj.theta());
-        let self_rot_xform = Affine2dH::rotate_hex(self_obj.theta());
+        let self_rot_xform = self_inverse_rot_xform.inv_rotate_hex();
         let origin_pos = self_obj.pos().dual() +
             self_rot_xform * self.header().offset().dual();
         let self_origin_that_grid =
