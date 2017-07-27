@@ -422,8 +422,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
                         ($off:expr) => {
                             let a = rhs_a.extract($off);
                             let b = rhs_b.extract($off);
-                            if that.is_populated(a as i16, b as i16) &&
-                                that.is_in_bounds(a as i16, b as i16) &&
+                            if that.is_in_bounds(a as i16, b as i16) &&
+                                that.is_populated(a as i16, b as i16) &&
                                 (a as i16 as i32) == a &&
                                 (b as i16 as i32) == b
                             {
@@ -836,6 +836,37 @@ mod test {
             a: 5 * CELL_L2_VERTEX, b: 5 * CELL_L2_VERTEX,
             rounded_radius:
                 CommonObject::round_radius(composite.calc_radius()),
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let xform = Affine2dH::rotate_hex(Wrapping(0));
+
+
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision(
+                &mut result,
+                black_box(obj_a), black_box(&composite), black_box(obj_b),
+                black_box(xform))
+        });
+    }
+
+    #[bench]
+    fn bench_composite_composite_collision_4x4_noncolliding(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+        // Artificially inflated radius will cause all cells to be checked even
+        // though none overlap.
+        let obj_a = UnpackedCommonObject {
+            a: -5 * CELL_L2_VERTEX, b: -5 * CELL_L2_VERTEX,
+            rounded_radius: 255,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let obj_b = UnpackedCommonObject {
+            a: 5 * CELL_L2_VERTEX, b: 5 * CELL_L2_VERTEX,
+            rounded_radius: 255,
             .. UnpackedCommonObject::default()
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
