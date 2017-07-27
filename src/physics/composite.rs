@@ -151,7 +151,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
     #[inline(always)]
     fn bitset_start(&self) -> *const u8 {
-        &self.0.borrow()[1] as *const i32x4 as *const u8
+        debug_assert!(self.0.borrow().len() >= 1);
+        unsafe {
+            self.0.borrow().as_ptr().offset(1) as *const u8
+        }
     }
 
     #[inline(always)]
