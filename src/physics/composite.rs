@@ -714,7 +714,7 @@ mod test {
         })]
 
         #[test]
-        fn composite_composite_collisions_roughly_correct(
+        fn cc_collisions_roughly_correct(
             ref lhs in arb_composite(),
             ref rhs in arb_composite()
         ) {
@@ -774,7 +774,7 @@ mod test {
     }
 
     #[bench]
-    fn bench_composite_composite_collision_1x1(b: &mut Bencher) {
+    fn bench_cc_collision_1x1(b: &mut Bencher) {
         static CELLS: &'static [(i16,i16)] = &[(0,0)];
 
         let composite = unsafe {
@@ -799,7 +799,7 @@ mod test {
     }
 
     #[bench]
-    fn bench_composite_composite_collision_4x4(b: &mut Bencher) {
+    fn bench_cc_collision_4x4(b: &mut Bencher) {
         let composite = unsafe {
             CompositeObject::<SmallVec<[i32x4;32]>>::build(
                 UnpackedCompositeHeader::default().pack(),
@@ -823,7 +823,7 @@ mod test {
     }
 
     #[bench]
-    fn bench_composite_composite_collision_4x4_nonoverlapping(b: &mut Bencher) {
+    fn bench_cc_collision_4x4_nonoverlapping(b: &mut Bencher) {
         let composite = unsafe {
             CompositeObject::<SmallVec<[i32x4;32]>>::build(
                 UnpackedCompositeHeader::default().pack(),
@@ -854,7 +854,7 @@ mod test {
     }
 
     #[bench]
-    fn bench_composite_composite_collision_4x4_noncolliding(b: &mut Bencher) {
+    fn bench_cc_collision_4x4_noncolliding(b: &mut Bencher) {
         let composite = unsafe {
             CompositeObject::<SmallVec<[i32x4;32]>>::build(
                 UnpackedCompositeHeader::default().pack(),
