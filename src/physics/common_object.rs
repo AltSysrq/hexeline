@@ -23,8 +23,8 @@ use simdext::*;
 use physics::Angle;
 use physics::coords::Vhs;
 
-pub const ROUNDED_RADIUS_SHIFT: u32 = 8;
-pub const ROUNDED_RADIUS_FACTOR: u32 = 1 << ROUNDED_RADIUS_SHIFT;
+pub const ROUNDED_SPAN_SHIFT: u32 = 8;
+pub const ROUNDED_SPAN_FACTOR: u32 = 1 << ROUNDED_SPAN_SHIFT;
 
 /// The packed form of the common object data.
 ///
@@ -44,7 +44,7 @@ pub struct CommonObject {
     /// Field 1:
     ///   - [ 0..31] b
     /// Field 2:
-    ///   - [ 0.. 7] rounded_radius
+    ///   - [ 0.. 7] rounded_span
     ///   - [ 8..15] collision_group
     ///   - [16..31] theta
     /// Field 3:
@@ -123,10 +123,10 @@ pub struct UnpackedCommonObject {
     pub b: i32,
     /// The rotation.
     pub theta: Angle,
-    /// The collision radius of the object (i.e., the maximum displacement
+    /// The collision span of the object (i.e., the maximum displacement
     /// along any *one* hexagonal axis to any collideable part of the object),
-    /// divided by ROUNDED_RADIUS_FACTOR, rounded up.
-    pub rounded_radius: u8,
+    /// divided by ROUNDED_SPAN_FACTOR, rounded up.
+    pub rounded_span: u8,
     /// No two objects with the same non-zero collision group will collide with
     /// each other.
     pub collision_group: u8,
@@ -178,8 +178,8 @@ pub struct UnpackedCommonObject {
 impl CommonObject {
     packed_field!(p:0[ 0..31]: i32 a, set_a, with_a);
     packed_field!(p:1[ 0..31]: i32 b, set_b, with_b);
-    packed_field!(p:2[ 0.. 7]: u8 rounded_radius, set_rounded_radius,
-                  with_rounded_radius);
+    packed_field!(p:2[ 0.. 7]: u8 rounded_span, set_rounded_span,
+                  with_rounded_span);
     packed_field!(p:2[ 8..15]: u8 collision_group, set_collision_group,
                   with_collision_group);
     packed_field!(p:2[16..31]: Angle theta, set_theta, with_theta,
@@ -215,7 +215,7 @@ impl CommonObject {
         UnpackedCommonObject {
             a: self.a(),
             b: self.b(),
-            rounded_radius: self.rounded_radius(),
+            rounded_span: self.rounded_span(),
             collision_group: self.collision_group(),
             theta: self.theta(),
             object_type: self.object_type(),
@@ -278,9 +278,9 @@ impl CommonObject {
         CommonObject { p: new_pos, d: new_dynamics }
     }
 
-    /// Translate the given l2 distance into a (non-rounded) object radius.
+    /// Translate the given l2 distance into a (non-rounded) object span.
     #[inline(always)]
-    pub fn radius_of_l2(l2: u32) -> u32 {
+    pub fn span_of_l2(l2: u32) -> u32 {
         // The maximum contribution of any single hexagonal axis to the L2
         // distance is given by
         //
@@ -298,11 +298,11 @@ impl CommonObject {
         ((l2 as u64 * 53570) >> 16) as u32
     }
 
-    /// Format `radius` as a suitable value for `rounded_radius`.
+    /// Format `span` as a suitable value for `rounded_span`.
     #[inline(always)]
-    pub fn round_radius(radius: u32) -> u8 {
-        debug_assert!(radius <= 255 << ROUNDED_RADIUS_SHIFT);
-        ((radius + ROUNDED_RADIUS_FACTOR - 1) >> ROUNDED_RADIUS_SHIFT) as u8
+    pub fn round_span(span: u32) -> u8 {
+        debug_assert!(span <= 255 << ROUNDED_SPAN_SHIFT);
+        ((span + ROUNDED_SPAN_FACTOR - 1) >> ROUNDED_SPAN_SHIFT) as u8
     }
 }
 
@@ -315,7 +315,7 @@ impl UnpackedCommonObject {
         }
             .with_a(self.a)
             .with_b(self.b)
-            .with_rounded_radius(self.rounded_radius)
+            .with_rounded_span(self.rounded_span)
             .with_collision_group(self.collision_group)
             .with_theta(self.theta)
             .with_object_type(self.object_type)
@@ -369,7 +369,7 @@ mod test {
         for &a in I32_BOUNDARIES {
         for &b in I32_BOUNDARIES {
         for theta in I16_BOUNDARIES.iter().map(|&t| Wrapping(t)) {
-        for &rounded_radius in U8_BOUNDARIES {
+        for &rounded_span in U8_BOUNDARIES {
         for &collision_group in U8_BOUNDARIES {
         for &object_type in U8_BOUNDARIES {
         for &extended_data in U16_BOUNDARIES {
@@ -387,7 +387,7 @@ mod test {
         for &wakeup_increment in U8_BOUNDARIES {
         for &id in ID_BOUNDARIES {
             let orig = UnpackedCommonObject {
-                a, b, theta, rounded_radius,
+                a, b, theta, rounded_span,
                 collision_group, object_type, extended_data,
                 data_dst_size,
                 vax4, fa, aax16, vbx4, fb, abx16, vthetax4, ftheta, athetax16,
@@ -447,7 +447,7 @@ mod test {
             a in -0x10000000i32..0x10000000,
             b in -0x10000000i32..0x10000000,
             theta in proptest::num::i16::ANY.prop_map(Wrapping),
-            rounded_radius in proptest::num::u8::ANY,
+            rounded_span in proptest::num::u8::ANY,
             collision_group in proptest::num::u8::ANY,
             object_type in proptest::num::u8::ANY,
             extended_data in proptest::num::u16::ANY,
@@ -466,7 +466,7 @@ mod test {
             tick_mod_4 in 0i32..4i32
         ) {
             let start = UnpackedCommonObject {
-                a, b, theta, rounded_radius, collision_group,
+                a, b, theta, rounded_span, collision_group,
                 object_type, extended_data, data_dst_size,
                 vax4, fa, aax16, vbx4, fb, abx16, vthetax4, ftheta,
                 athetax16, wakeup_counter, id,
@@ -475,7 +475,7 @@ mod test {
             let result = start.tick(tick_mod_4);
 
             // Constant properties don't change
-            assert_eq!(rounded_radius, result.rounded_radius());
+            assert_eq!(rounded_span, result.rounded_span());
             assert_eq!(collision_group, result.collision_group());
             assert_eq!(object_type, result.object_type());
             assert_eq!(extended_data, result.extended_data());

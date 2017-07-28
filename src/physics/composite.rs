@@ -279,10 +279,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
-    /// Computes an upper bound on the collision radius of this object (as per
-    /// `CommonObject::rounded_radius`, but not yet rounded) from the centre of
+    /// Computes an upper bound on the collision span of this object (as per
+    /// `CommonObject::rounded_span`, but not yet rounded) from the centre of
     /// gravity.
-    pub fn calc_radius(&self) -> u32 {
+    pub fn calc_span(&self) -> u32 {
         // Sacrifice a bit of precision to avoid overflow
         // Dropping 4 bits means we can support a max distance of 2**(15+4) =
         // 2**19 (8 screens, far more than we'll ever need) rather than just
@@ -318,7 +318,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Compute actual distance, then round up the precision lost by
         // `SHIFT`, and add a cell radius to account for the cell coordinate
         // being the centre rather than the edge.
-        CommonObject::radius_of_l2(
+        CommonObject::span_of_l2(
             ((max_dist.sqrt_up() + 1) << SHIFT) + CELL_L2_VERTEX as u32)
     }
 
@@ -371,10 +371,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Determine the bounding rhombus of `that` within the grid of `self`.
         // We can use a simple bitshift with a slop factor for a fast
         // approximation of what area of the grid is covered.
-        let that_radius = (that_obj.rounded_radius() as i32)
-            << ROUNDED_RADIUS_SHIFT;
+        let that_span = (that_obj.rounded_span() as i32)
+            << ROUNDED_SPAN_SHIFT;
         let that_bounds_self_grid = that_cog_self_grid.repr() +
-            i32x4::new(-that_radius, -that_radius, that_radius, that_radius);
+            i32x4::new(-that_span, -that_span, that_span, that_span);
         let that_bounds_self_grid =
             (that_bounds_self_grid >> CELL_HEX_SHIFT) +
             i32x4::new(-1, -1, 1, 1);
@@ -644,9 +644,9 @@ mod test {
                         || cells.iter().map(|&v| v))
                     },
                 };
-                let rad = ret.data.calc_radius();
-                ret.common.set_rounded_radius(
-                    CommonObject::round_radius(rad));
+                let rad = ret.data.calc_span();
+                ret.common.set_rounded_span(
+                    CommonObject::round_span(rad));
                 ret
             }).boxed()
     }
@@ -783,8 +783,8 @@ mod test {
                 || CELLS.iter().map(|&v| v))
         };
         let obj = UnpackedCommonObject {
-            rounded_radius:
-                CommonObject::round_radius(composite.calc_radius()),
+            rounded_span:
+                CommonObject::round_span(composite.calc_span()),
             .. UnpackedCommonObject::default()
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
@@ -806,8 +806,8 @@ mod test {
                 || (0..4).flat_map(|r| (0..4).map(move |c| (r, c))))
         };
         let obj = UnpackedCommonObject {
-            rounded_radius:
-                CommonObject::round_radius(composite.calc_radius()),
+            rounded_span:
+                CommonObject::round_span(composite.calc_span()),
             .. UnpackedCommonObject::default()
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
@@ -831,14 +831,14 @@ mod test {
         };
         let obj_a = UnpackedCommonObject {
             a: -5 * CELL_L2_VERTEX, b: -5 * CELL_L2_VERTEX,
-            rounded_radius:
-                CommonObject::round_radius(composite.calc_radius()),
+            rounded_span:
+                CommonObject::round_span(composite.calc_span()),
             .. UnpackedCommonObject::default()
         }.pack();
         let obj_b = UnpackedCommonObject {
             a: 5 * CELL_L2_VERTEX, b: 5 * CELL_L2_VERTEX,
-            rounded_radius:
-                CommonObject::round_radius(composite.calc_radius()),
+            rounded_span:
+                CommonObject::round_span(composite.calc_span()),
             .. UnpackedCommonObject::default()
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
@@ -860,16 +860,16 @@ mod test {
                 UnpackedCompositeHeader::default().pack(),
                 || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
         };
-        // Artificially inflated radius will cause all cells to be checked even
+        // Artificially inflated span will cause all cells to be checked even
         // though none overlap.
         let obj_a = UnpackedCommonObject {
             a: -5 * CELL_L2_VERTEX, b: -5 * CELL_L2_VERTEX,
-            rounded_radius: 255,
+            rounded_span: 255,
             .. UnpackedCommonObject::default()
         }.pack();
         let obj_b = UnpackedCommonObject {
             a: 5 * CELL_L2_VERTEX, b: 5 * CELL_L2_VERTEX,
-            rounded_radius: 255,
+            rounded_span: 255,
             .. UnpackedCommonObject::default()
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));

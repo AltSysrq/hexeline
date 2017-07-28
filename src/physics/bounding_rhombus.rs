@@ -46,19 +46,15 @@ impl fmt::Debug for BoundingRhombus {
 }
 
 impl BoundingRhombus {
-    /// Create a `BoundingRhombus` centred on `point` and extending `radius`
+    /// Create a `BoundingRhombus` centred on `point` and extending `span`
     /// distance along the A and B axes.
-    ///
-    /// Beware that `radius` does not correspond to the radius of the bounding
-    /// circle, since the unit circle has an L2 distance from the centre
-    /// greater than 1 in hexagonal space.
     #[inline(always)]
-    pub fn around(point: Vhs, radius: i32) -> Self {
+    pub fn around(point: Vhs, span: i32) -> Self {
         let point = point.repr();
         let neg = i32x4::splat(0) - point;
         let centre = i32x4::new(neg.extract(0), neg.extract(1),
                                 point.extract(0), point.extract(1));
-        BoundingRhombus(centre + i32x4::splat(radius))
+        BoundingRhombus(centre + i32x4::splat(span))
     }
 
     /// Create a `BoundingRhombus` covering the area between the two points
