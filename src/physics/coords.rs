@@ -618,6 +618,24 @@ impl Vhs {
         (coord.extract(0) + a_off, coord.extract(1) + b_off)
     }
 
+    #[inline(always)]
+    fn to_grid_overlap_validity(self) -> (i32x4, i32x4, i32x4) {
+        let (a, b, residue) = self.to_grid();
+        let valid_mask = residue - i32x4::splat(2 * CELL_HEX_SIZE);
+        (a, b, valid_mask)
+    }
+
+    /// Assuming this point refers to the centre of an axis-aligned hexagon,
+    /// determine which hexagonal grid points overlap with that hexagon.
+    ///
+    /// Returns a 4-bit bitset indicating offsets `<0,0>`, `<1,0>`, `<0,1>`,
+    /// `<1,1>` from `to_grid_approx()`, in that order.
+    #[inline(always)]
+    pub fn to_grid_overlap_mask(self) -> u32 {
+        let (_, _, valid_mask) = self.to_grid_overlap_validity();
+        valid_mask.movemask()
+    }
+
     /// Assuming this point refers to the centre of an axis-aligned hexagon,
     /// determine which hexagonal grid points overlap with that hexagon.
     ///
@@ -626,8 +644,7 @@ impl Vhs {
     /// slots, and are distinguished by having a value of -32768.
     #[inline(always)]
     pub fn to_grid_overlap(self) -> (i32x4, i32x4) {
-        let (a, b, residue) = self.to_grid();
-        let valid_mask = residue - i32x4::splat(2 * CELL_HEX_SIZE);
+        let (a, b, valid_mask) = self.to_grid_overlap_validity();
         let a: i32x4 = a >> CELL_HEX_SHIFT;
         let b: i32x4 = b >> CELL_HEX_SHIFT;
         let mask = bool32ix4::from_repr(valid_mask >> 31);
@@ -696,6 +713,11 @@ mod test {
     #[bench]
     fn bench_vhs_to_grid_overlap(b: &mut Bencher) {
         b.iter(|| black_box(Vhs(65536, 65536)).to_grid_overlap())
+    }
+
+    #[bench]
+    fn bench_vhs_to_grid_overlap_mask(b: &mut Bencher) {
+        b.iter(|| black_box(Vhs(65536, 65536)).to_grid_overlap_mask())
     }
 
     #[test]
