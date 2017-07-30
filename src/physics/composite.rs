@@ -236,6 +236,12 @@ impl Neighbourhood {
     pub fn c11(self) -> bool {
         0 != self.0 & 8
     }
+
+    /// Returns the neighbourhood of cells which are overlapped by the unit
+    /// hexagon at `v`.
+    pub fn hits(self, v: Vhs) -> Self {
+        Neighbourhood(self.0 & v.to_grid_overlap_mask())
+    }
 }
 
 /// A coordinate of a chunk and bit within a row.
@@ -650,33 +656,39 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
                 let coord = row_zero + grid_displacement.snd() *
                     Vhs(col as i32, col as i32);
 
-                let (rhs_a, rhs_b) = coord.to_grid_overlap();
+                let approx = coord.to_grid_approx();
+                let a = approx.a();
+                let b = approx.b();
+                if a as i16 as i32 != a || b as i16 as i32 != b {
+                    continue;
+                }
+                let a = a as i16;
+                let b = b as i16;
+                if !that.is_in_a_bound(a) { continue; }
+                let (chunk, bit) = that.chunk(a, b);
+                let neighbourhood = chunk.neighbourhood(bit);
+                if !neighbourhood.any() { continue; }
+                if !that.is_in_b_bound(chunk, b) { continue; }
+
+                let hits = neighbourhood.hits(coord);
                 macro_rules! check {
-                    ($off:expr) => {
-                        let a = rhs_a.extract($off);
-                        let b = rhs_b.extract($off);
-                        if that.is_in_a_bound(a as i16) &&
-                            (a as i16 as i32) == a &&
-                            (b as i16 as i32) == b
-                        {
-                            let (chunk, bit) = that.chunk(a as i16, b as i16);
-                            if chunk.is_populated(bit) &&
-                                that.is_in_b_bound(chunk, b as i16)
+                    ($ao:expr, $bo:expr, $meth:ident) => {
+                        // No need for bounds checking due to the row and
+                        // column padding.
+                        if hits.$meth() {
+                            if dst.push([(row as i16, col as i16),
+                                         (a as i16 + $ao, b as i16 + $bo)])
+                                .is_some()
                             {
-                                if dst.push([(row as i16, col as i16),
-                                             (a as i16, b as i16)])
-                                    .is_some()
-                                {
-                                    return;
-                                }
+                                return;
                             }
                         }
                     }
                 }
-                check!(0);
-                check!(1);
-                check!(2);
-                check!(3);
+                check!(0, 0, c00);
+                check!(0, 1, c01);
+                check!(1, 0, c10);
+                check!(1, 1, c11);
             }
 
             row_zero = row_zero + grid_displacement.fst();
