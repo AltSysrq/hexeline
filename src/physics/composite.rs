@@ -675,7 +675,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Determine the first and last rows to scan, and start tracking the
         // base coordinate for that row.
         let first_row = max(that_bounds_self_grid.extract(0),
-                            self.header().row_offset() as i32);
+                            // First row is always empty
+                            self.header().row_offset() as i32 + 1);
         let last_row = min(that_bounds_self_grid.extract(2),
                            (self.header().row_offset() as i32) +
                            (1 << self.header().rows()) - 1);
