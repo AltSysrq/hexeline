@@ -1292,7 +1292,12 @@ mod test {
                 black_box(Affine2dH::rotate_hex(Wrapping(0)) *
                           Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE)),
                 black_box(Vhs(65536, 65536)),
-                black_box(0), black_box(0))
+                black_box(0), black_box(0));
+            // Force the function to be evaluated even when inlined. Awkwardly,
+            // we can't afford to actually return the `SmallVec` as it turns
+            // into a large `memcpy` that completely dominates the function
+            // under test.
+            result.len()
         })
     }
 
