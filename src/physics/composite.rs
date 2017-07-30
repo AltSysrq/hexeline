@@ -182,6 +182,13 @@ impl Chunk {
         0 != (self.0 >> ix) & 1
     }
 
+    /// Returns whether any cells belonging to this row are present in this
+    /// chunk.
+    #[inline(always)]
+    pub fn has_any_on_row(self) -> bool {
+        0 != self.0 & 0x555555555555
+    }
+
     fn set_col0(&mut self, col: u16) {
         self.0 |= 1 << col;
     }
@@ -298,6 +305,10 @@ impl<'a> RowBitIter<'a> {
         self.current = prepare_rbi_chunk(unsafe {
             *self.row.get_unchecked(col.chunk as usize)
         }) >> col.bit;
+    }
+
+    fn is_row_nonempty(&self) -> bool {
+        self.row.iter().any(|chunk| chunk.has_any_on_row())
     }
 }
 
@@ -483,6 +494,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             (base as i32) + ((CHUNK_WIDTH as i32) << self.header().pitch()),
             last_col as i32);
         let actual_len = actual_end - actual_start;
+        let actual_len = if bits.is_row_nonempty() { actual_len } else { 0 };
 
         bits.reset(self.col_index(actual_start as i16));
         bits.take(max(0, actual_len) as usize)
@@ -1187,5 +1199,45 @@ mod test {
                 black_box(obj_a), black_box(&composite), black_box(obj_b),
                 black_box(xform))
         });
+    }
+
+    #[bench]
+    fn bench_composite_col_index(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+        b.iter(|| composite.col_index(black_box(42)));
+    }
+
+    #[test]
+    fn uiaeo() {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+        // Artificially inflated span will cause all cells to be checked even
+        // though none overlap.
+        let obj_a = UnpackedCommonObject {
+            a: -5 * CELL_L2_VERTEX, b: -5 * CELL_L2_VERTEX,
+            rounded_span: 255,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let obj_b = UnpackedCommonObject {
+            a: 5 * CELL_L2_VERTEX, b: 5 * CELL_L2_VERTEX,
+            rounded_span: 255,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let xform = Affine2dH::rotate_hex(Wrapping(0));
+
+        for _ in 0..1000000 {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision(
+                &mut result,
+                black_box(obj_a), black_box(&composite), black_box(obj_b),
+                black_box(xform))
+        }
     }
 }
