@@ -61,6 +61,9 @@ pub struct UnpackedCompositeHeader {
     pub row_offset: i16,
     /// The power of two of the number of rows in this composite.
     pub rows: u8,
+    /// The actual number of rows in this composite, excluding the empty first
+    /// row and any padding rows after the last one.
+    pub row_count: u16,
     /// The power of two of the width, in cells, of each row.
     pub pitch: u8,
     /// The mass of this object.
@@ -74,6 +77,7 @@ impl UnpackedCompositeHeader {
             .with_b_offset(self.b_offset)
             .with_row_offset(self.row_offset)
             .with_rows(self.rows)
+            .with_row_count(self.row_count)
             .with_pitch(self.pitch)
             .with_mass(self.mass)
     }
@@ -93,6 +97,7 @@ impl CompositeHeader {
     packed_field!(0:2[16..23]:  u8 rows, set_rows, with_rows);
     packed_field!(0:2[24..31]:  u8 pitch, set_pitch, with_pitch);
     packed_field!(0:3[ 0..15]: u16 mass, set_mass, with_mass);
+    packed_field!(0:3[16..31]: u16 row_count, set_row_count, with_row_count);
 
     /// Return the (a_offset, b_offset) vector.
     #[inline(always)]
@@ -106,6 +111,7 @@ impl CompositeHeader {
             b_offset: self.b_offset(),
             row_offset: self.row_offset(),
             rows: self.rows(),
+            row_count: self.row_count(),
             pitch: self.pitch(),
             mass: self.mass(),
         }
@@ -496,7 +502,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     /// excluding the zeroth row which is always empty.
     pub fn rows(&self) -> impl Iterator<Item = i16> {
         let row_offset = self.header().row_offset() as i32;
-        (1..(1i32 << self.header().rows())).map(
+        (1..self.header().row_count() as i32 + 1).map(
             move |row| (row + row_offset) as i16)
     }
 
@@ -678,8 +684,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
                             // First row is always empty
                             self.header().row_offset() as i32 + 1);
         let last_row = min(that_bounds_self_grid.extract(2),
-                           (self.header().row_offset() as i32) +
-                           (1 << self.header().rows()) - 1);
+                           self.header().row_offset() as i32 +
+                           self.header().row_count() as i32 + 1);
         let mut row_zero: Vhs = self_origin_that_grid +
             grid_displacement.fst() * Vhs(first_row, first_row);
 
@@ -795,6 +801,8 @@ impl<A : Array<Item = i32x4>> CompositeObject<SmallVec<A>> {
             debug_assert!((a, b) > prev);
             prev = (a, b);
 
+            // Since min_row is offset by 1, this also causes the blank top row
+            // to be added implicitly
             let row_ix = (a - min_row) as usize;
             // Add any empty rows as well as this row if needed.
             while row_spans.len() <= row_ix {
@@ -829,6 +837,8 @@ impl<A : Array<Item = i32x4>> CompositeObject<SmallVec<A>> {
         let rrows = log2_up(num_rows as i16);
         base.set_row_offset(min_row as i16);
         base.set_rows(rrows);
+        debug_assert!(num_rows <= 65536);
+        base.set_row_count((num_rows - 1) as u16);
         let pitch = log2_up(
             ((max_row_span as u32 + CHUNK_WIDTH - 1) /
              CHUNK_WIDTH) as i16);
@@ -983,12 +993,13 @@ mod test {
             b_offset in proptest::num::i32::ANY,
             row_offset in proptest::num::i16::ANY,
             rows in proptest::num::u8::ANY,
+            row_count in proptest::num::u16::ANY,
             pitch in proptest::num::u8::ANY,
             mass in proptest::num::u16::ANY
         ) {
             let orig = UnpackedCompositeHeader {
                 a_offset, b_offset, row_offset,
-                rows, pitch, mass,
+                rows, row_count, pitch, mass,
             };
             assert_eq!(orig.pack().unpack(), orig);
         }
