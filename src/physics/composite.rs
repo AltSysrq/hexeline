@@ -694,6 +694,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
+    #[inline(always)]
     fn test_composite_collision_row<R : Borrow<[i32x4]>>(
         &self, dst: &mut CollisionSet,
         that: &CompositeObject<R>,
@@ -707,6 +708,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
+    #[inline(always)]
     fn test_composite_collision_col<R : Borrow<[i32x4]>>(
         &self, dst: &mut CollisionSet,
         that: &CompositeObject<R>,
