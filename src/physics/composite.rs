@@ -684,51 +684,71 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
         // Scan the columns of each row for overlapping cells
         for row in first_row..last_row + 1 {
-            let col_iter = self.cells_in_subrow(
-                row as i16, that_bounds_self_grid.extract(1) as i16,
+            self.test_composite_collision_row(
+                dst, that, grid_displacement,
+                row_zero, row as i16,
+                that_bounds_self_grid.extract(1) as i16,
                 that_bounds_self_grid.extract(3) as i16);
-
-            for col in col_iter {
-                let coord = row_zero + grid_displacement.snd() *
-                    Vhs(col as i32, col as i32);
-
-                let approx = coord.to_grid_approx();
-                let a = approx.a();
-                let b = approx.b();
-                if a as i16 as i32 != a || b as i16 as i32 != b {
-                    continue;
-                }
-                let a = a as i16;
-                let b = b as i16;
-                if !that.is_in_a_bound(a) { continue; }
-                let (chunk, bit) = that.chunk(a, b);
-                let neighbourhood = chunk.neighbourhood(bit);
-                if !neighbourhood.any() { continue; }
-                if !that.is_in_b_bound(chunk, b) { continue; }
-
-                let hits = neighbourhood.hits(coord);
-                macro_rules! check {
-                    ($ao:expr, $bo:expr, $meth:ident) => {
-                        // No need for bounds checking due to the row and
-                        // column padding.
-                        if hits.$meth() {
-                            if dst.push([(row as i16, col as i16),
-                                         (a as i16 + $ao, b as i16 + $bo)])
-                                .is_some()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                }
-                check!(0, 0, c00);
-                check!(0, 1, c01);
-                check!(1, 0, c10);
-                check!(1, 1, c11);
-            }
-
             row_zero = row_zero + grid_displacement.fst();
         }
+    }
+
+    fn test_composite_collision_row<R : Borrow<[i32x4]>>(
+        &self, dst: &mut CollisionSet,
+        that: &CompositeObject<R>,
+        grid_displacement: Vhl,
+        row_zero: Vhs, row: i16,
+        first_col: i16, last_col: i16
+    ) {
+        for col in self.cells_in_subrow(row, first_col, last_col) {
+            self.test_composite_collision_col(
+                dst, that, grid_displacement, row_zero, row, col);
+        }
+    }
+
+    fn test_composite_collision_col<R : Borrow<[i32x4]>>(
+        &self, dst: &mut CollisionSet,
+        that: &CompositeObject<R>,
+        grid_displacement: Vhl,
+        row_zero: Vhs,
+        row: i16, col: i16
+    ) {
+        let coord = row_zero + grid_displacement.snd() *
+            Vhs(col as i32, col as i32);
+
+        let approx = coord.to_grid_approx();
+        let a = approx.a();
+        let b = approx.b();
+        if a as i16 as i32 != a || b as i16 as i32 != b {
+            return;
+        }
+        let a = a as i16;
+        let b = b as i16;
+        if !that.is_in_a_bound(a) { return; }
+        let (chunk, bit) = that.chunk(a, b);
+        let neighbourhood = chunk.neighbourhood(bit);
+        if !neighbourhood.any() { return; }
+        if !that.is_in_b_bound(chunk, b) { return; }
+
+        let hits = neighbourhood.hits(coord);
+        macro_rules! check {
+            ($ao:expr, $bo:expr, $meth:ident) => {
+                // No need for bounds checking due to the row and
+                // column padding.
+                if hits.$meth() {
+                    if dst.push([(row as i16, col as i16),
+                                 (a as i16 + $ao, b as i16 + $bo)])
+                        .is_some()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        check!(0, 0, c00);
+        check!(0, 1, c01);
+        check!(1, 0, c10);
+        check!(1, 1, c11);
     }
 }
 
@@ -1215,7 +1235,6 @@ mod test {
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
 
-
         b.iter(|| {
             let mut result = CollisionSet::new();
             black_box(&composite).test_composite_collision(
@@ -1223,6 +1242,44 @@ mod test {
                 black_box(obj_a), black_box(&composite), black_box(obj_b),
                 black_box(xform))
         });
+    }
+
+    #[bench]
+    fn bench_cc_collision_row(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision_row(
+                &mut result, black_box(&composite),
+                black_box(Affine2dH::rotate_hex(Wrapping(0)) *
+                          Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE)),
+                black_box(Vhs(65536, 65536)),
+                black_box(0), black_box(-3), black_box(2))
+        })
+    }
+
+    #[bench]
+    fn bench_cc_collision_col(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision_col(
+                &mut result, black_box(&composite),
+                black_box(Affine2dH::rotate_hex(Wrapping(0)) *
+                          Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE)),
+                black_box(Vhs(65536, 65536)),
+                black_box(0), black_box(0))
+        })
     }
 
     #[bench]
