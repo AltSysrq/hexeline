@@ -261,13 +261,16 @@ pub struct ChunkRowCoord {
 }
 
 fn prepare_rbi_chunk(chunk: Chunk) -> u64 {
-    chunk.0 as u64 & ((1 << 2*CHUNK_WIDTH) - 1) | (1 << 2*CHUNK_WIDTH)
+    // Filter out everything other than the cells we care about, then put a
+    // sentinel of 1 at the top (which will get right-shifted to 0 when the
+    // scanner reaches the end).
+    chunk.0 as u64 & 0x555555555555 | (1 << 2*CHUNK_WIDTH)
 }
 
-/// An iterator over the cell bits in a single chunk row.
+/// An iterator which returns offsets of present cells within a row.
 ///
 /// The iterator is infinite; it simply wraps around every time it reaches the
-/// end.
+/// end. This also means the last value is meaningless.
 #[derive(Clone, Copy, Debug)]
 struct RowBitIter<'a> {
     row: &'a [Chunk],
@@ -310,24 +313,49 @@ impl<'a> RowBitIter<'a> {
     fn is_row_nonempty(&self) -> bool {
         self.row.iter().any(|chunk| chunk.has_any_on_row())
     }
+
+    fn scan_through(self, base: i16, end: i16)
+                    -> impl 'a + Iterator<Item = i16> {
+        // Need to offset base by 1 since each iteration returns at least 1 but
+        // if there's a cell in the first one, we want an output of `base`.
+        self.scan(base - 1,
+                  |accum, step| { *accum += step as i16; Some(*accum) })
+            .take_while(move |&val| val < end)
+    }
 }
 
 impl<'a> Iterator for RowBitIter<'a> {
-    type Item = bool;
+    type Item = u32;
 
     #[inline(always)]
-    fn next(&mut self) -> Option<bool> {
-        let v = self.current & 1;
-        self.current >>= 2;
-        if 1 == self.current {
-            self.current = prepare_rbi_chunk(unsafe {
-                *self.row.get_unchecked(self.next_chunk)
-            });
-            self.next_chunk = (self.next_chunk + 1) &
-                (self.row.len() - 1);
-        }
+    fn next(&mut self) -> Option<u32> {
+        let mut ret = 0;
+        let mut cycles = 0;
 
-        Some(1 == v)
+        loop {
+            let n = self.current.trailing_zeros() + 2;
+            self.current >>= n;
+            ret += n / 2;
+
+            if 0 == self.current {
+                // We counted the sentinel as a cell; fix that
+                ret -= 1;
+
+                self.current = prepare_rbi_chunk(unsafe {
+                    *self.row.get_unchecked(self.next_chunk)
+                });
+                self.next_chunk = (self.next_chunk + 1) &
+                    (self.row.len() - 1);
+                cycles += 1;
+
+                // If the whole row is empty, we can't ever return anything.
+                if cycles > self.row.len() {
+                    return None;
+                }
+            } else {
+                return Some(ret);
+            }
+        }
     }
 }
 
@@ -474,13 +502,12 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
     /// Returns an iterator over the logical indices of populated columns in
     /// the given logical row.
-    pub fn cells_in_row<'a>(&'a self, row: i16) -> impl 'a + Iterator<Item = i16> {
+    pub fn cells_in_row<'a>(&'a self, row: i16)
+                            -> impl 'a + Iterator<Item = i16> {
         let (bits, base) = RowBitIter::start_of_row(self, row);
-        let base = base as isize;
-        bits.take((CHUNK_WIDTH as usize) << self.header().pitch())
-            .enumerate()
-            .filter(|&(_, present)| present)
-            .map(move |(ix, _)| (ix as isize + base) as i16)
+        let end = (base as i16) + (CHUNK_WIDTH << self.header().pitch()) as i16;
+
+        bits.scan_through(base as i16, end)
     }
 
     /// Returns an iterator over the logical indices of populated columns in
@@ -494,13 +521,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             (base as i32) + ((CHUNK_WIDTH as i32) << self.header().pitch()),
             last_col as i32);
         let actual_len = actual_end - actual_start;
-        let actual_len = if bits.is_row_nonempty() { actual_len } else { 0 };
 
         bits.reset(self.col_index(actual_start as i16));
-        bits.take(max(0, actual_len) as usize)
-            .enumerate()
-            .filter(|&(_, present)| present)
-            .map(move |(ix, _)| (ix as i32 + actual_start) as i16)
+        bits.scan_through(actual_start as i16,
+                          (actual_start + actual_len) as i16)
     }
 
     /// Returns an iterator over the logical indices of cells which are
