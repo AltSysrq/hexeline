@@ -42,6 +42,7 @@ use arrayvec::ArrayVec;
 use simd::*;
 use smallvec::{Array, SmallVec};
 
+use simdext::*;
 use intext::*;
 use physics::common_object::*;
 use physics::coords::*;
@@ -258,7 +259,7 @@ impl Neighbourhood {
 }
 
 /// A coordinate of a chunk and bit within a row.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChunkRowCoord {
     /// The offset of the chunk within the row.
     pub chunk: u16,
@@ -447,6 +448,14 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         self.row_phys_index(row) << self.header().pitch()
     }
 
+    /// Like `row_chunk_index`, but processes 4 rows at once.
+    #[inline(always)]
+    fn row_chunk_index4(&self, row: i32x4) -> u32x4 {
+        let row = row & i32x4::splat((1 << self.header().rows()) - 1);
+        let row: i32x4 = row << self.header().pitch();
+        row.to_u32()
+    }
+
     /// Returns the chunk offset (within the row) and bit (as a multiple of
     /// two) of the given column.
     #[inline(always)]
@@ -460,6 +469,33 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let bit = (col % 24) << 1;
         let chunk = d24 & ((1 << self.header().pitch()) - 1);
         ChunkRowCoord { chunk, bit }
+    }
+
+    /// Like `col_index()`, but translates four columns at a time.
+    ///
+    /// The chunk index is stored in the high half of each lane, and the bit
+    /// index in the low half.
+    #[inline(always)]
+    fn col_index4(&self, col: i32x4) -> u32x4 {
+        // This is the code LLVM generates for `col_index`, translated to SIMD.
+        // (u32x4 doesn't have division or modulo operators since SSE has no
+        // integer division support.) Variable names are just the registers
+        // LLVM happened to choose; don't read anything special into them.
+        let esi = (col + i32x4::splat(32768)).to_u32();
+        let edx = esi * u32x4::splat(0xaaab);   // imul edx,eax,0xaaab
+        let edx: u32x4 = edx >> 0x14;           // shr edx,0x14
+        let eax: u32x4 = edx << 3;              // lea eax,[rdx*8+0x0]
+        let eax: u32x4 = eax + (eax << 1);      // lea eax,[rax+rax*2]
+        let esi = esi - eax;                    // sub esi,eax
+        let cl = self.header().pitch();         // Multiple instructions
+        let eax = u32x4::splat(1);              // mov eax,0x1
+        let eax: u32x4 = eax << cl;             // shl eax,cl
+        // LLVM's code is sightly different for some reason
+        let eax = eax - u32x4::splat(1);        // add eax,0xfff
+        let eax = eax & edx;                    // and eax,edx
+
+        // esi now holds the bit index, eax the chunk index
+        (eax << 16) | (esi << 1)
     }
 
     /// Load the chunk containing `(row, col)` and return that chunk and the
@@ -708,45 +744,100 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         row_zero: Vhs, row: i16,
         first_col: i16, last_col: i16
     ) {
-        for col in self.cells_in_subrow(row, first_col, last_col) {
-            self.test_composite_collision_col(
-                dst, that, grid_displacement, row_zero, row, col);
+        let mut iter = self.cells_in_subrow(row, first_col, last_col);
+        loop {
+            let mut cols = i32x4::splat(0);
+            let mut mask = 0;
+            if let Some(col) = iter.next() {
+                cols = cols.replace(0, col as i32);
+                mask |= 1;
+                if let Some(col) = iter.next() {
+                    cols = cols.replace(1, col as i32);
+                    mask |= 2;
+                    if let Some(col) = iter.next() {
+                        cols = cols.replace(2, col as i32);
+                        mask |= 4;
+                        if let Some(col) = iter.next() {
+                            cols = cols.replace(3, col as i32);
+                            mask |= 8;
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
+
+            self.test_composite_collision_col4(
+                dst, that, grid_displacement, row_zero, row, cols, mask);
+            if 0xF != mask { break; }
         }
     }
 
     #[inline(always)]
-    fn test_composite_collision_col<R : Borrow<[i32x4]>>(
+    fn test_composite_collision_col4<R : Borrow<[i32x4]>>(
         &self, dst: &mut CollisionSet,
         that: &CompositeObject<R>,
         grid_displacement: Vhl,
         row_zero: Vhs,
-        row: i16, col: i16
+        row: i16, col: i32x4,
+        mask: u32
     ) {
-        let coord = row_zero + grid_displacement.snd() *
-            Vhs(col as i32, col as i32);
+        let nominal_a = i32x4::splat(row_zero.a()) +
+            i32x4::splat(grid_displacement.snd().a()) * col;
+        let nominal_b = i32x4::splat(row_zero.b()) +
+            i32x4::splat(grid_displacement.snd().b()) * col;
+        let approx_a: i32x4 = nominal_a >> CELL_HEX_SHIFT;
+        let approx_b: i32x4 = nominal_b >> CELL_HEX_SHIFT;
 
-        let approx = coord.to_grid_approx();
-        let a = approx.a();
-        let b = approx.b();
-        if a as i16 as i32 != a || b as i16 as i32 != b {
-            return;
+        let a_in_bounds = approx_a.nsw_between(
+            that.header().row_offset() as i32,
+            that.header().row_offset() as i32 +
+                1 + that.header().row_count() as i32);
+
+        let row_indices = that.row_chunk_index4(approx_a);
+        let col_coords = that.col_index4(approx_b);
+        let chunk_indices = row_indices + (col_coords >> 16);
+        let (chunk0, chunk1, chunk2, chunk3) = unsafe {(
+            // AVX512 could do this in one instruction with gather, but any
+            // system with AVX512 is so far above the needed spec that there's
+            // no reason to bother with it.
+            *that.chunks().get_unchecked(chunk_indices.extract(0) as usize),
+            *that.chunks().get_unchecked(chunk_indices.extract(1) as usize),
+            *that.chunks().get_unchecked(chunk_indices.extract(2) as usize),
+            *that.chunks().get_unchecked(chunk_indices.extract(3) as usize)
+        )};
+
+        let to_check = mask & a_in_bounds.movemask();
+        macro_rules! check_lane {
+            ($lane:expr, $chunk:expr) => {{
+                if 0 != to_check & (1 << $lane) {
+                    let neighbourhood = $chunk.neighbourhood(
+                        col_coords.extract($lane) as u16);
+                    let b = approx_b.extract($lane);
+                    if neighbourhood.any() &&
+                        that.is_in_b_bound($chunk, b as i16) &&
+                        b as i16 as i32 == b
+                    {
+                        let hits = neighbourhood.hits(
+                            Vhs(nominal_a.extract($lane),
+                                nominal_b.extract($lane)));
+
+                        check!(hits, $lane, 0, 0, c00);
+                        check!(hits, $lane, 0, 1, c01);
+                        check!(hits, $lane, 1, 0, c10);
+                        check!(hits, $lane, 1, 1, c11);
+                    }
+                }
+            }}
         }
-        let a = a as i16;
-        let b = b as i16;
-        if !that.is_in_a_bound(a) { return; }
-        let (chunk, bit) = that.chunk(a, b);
-        let neighbourhood = chunk.neighbourhood(bit);
-        if !neighbourhood.any() { return; }
-        if !that.is_in_b_bound(chunk, b) { return; }
-
-        let hits = neighbourhood.hits(coord);
         macro_rules! check {
-            ($ao:expr, $bo:expr, $meth:ident) => {
+            ($hits:expr, $lane:expr, $ao:expr, $bo:expr, $meth:ident) => {
                 // No need for bounds checking due to the row and
                 // column padding.
-                if hits.$meth() {
-                    if dst.push([(row as i16, col as i16),
-                                 (a as i16 + $ao, b as i16 + $bo)])
+                if $hits.$meth() {
+                    if dst.push([(row as i16, col.extract($lane) as i16),
+                                 (approx_a.extract($lane) as i16 + $ao,
+                                  approx_b.extract($lane) as i16 + $bo)])
                         .is_some()
                     {
                         return;
@@ -754,10 +845,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
                 }
             }
         }
-        check!(0, 0, c00);
-        check!(0, 1, c01);
-        check!(1, 0, c10);
-        check!(1, 1, c11);
+        check_lane!(0, chunk0);
+        check_lane!(1, chunk1);
+        check_lane!(2, chunk2);
+        check_lane!(3, chunk3);
     }
 }
 
@@ -1080,6 +1171,32 @@ mod test {
             assert!(not_expected.is_empty(), "Iterated NX cells {:?}",
                     not_expected);
         }
+
+        #[test]
+        fn simd_col_index_matches_scalar(
+            ref composite in arb_composite(),
+            cols in [(-4096i16..4096i16),
+                     (-4096i16..4096i16),
+                     (-4096i16..4096i16),
+                     (-4096i16..4096i16)]
+        ) {
+            let composite = &composite.data;
+
+            let res = composite.col_index4(
+                i32x4::new(cols[0] as i32,
+                           cols[1] as i32,
+                           cols[2] as i32,
+                           cols[3] as i32));
+            for i in 0..4 {
+                let expected = composite.col_index(cols[i]);
+                let actual = ChunkRowCoord {
+                    chunk: (res.extract(i as u32) >> 16) as u16,
+                    bit: (res.extract(i as u32) & 0xFFFF) as u16,
+                };
+                assert_eq!(expected, actual);
+            }
+        }
+
     }
 
     proptest! {
@@ -1278,7 +1395,7 @@ mod test {
     }
 
     #[bench]
-    fn bench_cc_collision_col(b: &mut Bencher) {
+    fn bench_cc_collision_col4(b: &mut Bencher) {
         let composite = unsafe {
             CompositeObject::<SmallVec<[i32x4;32]>>::build(
                 UnpackedCompositeHeader::default().pack(),
@@ -1287,12 +1404,13 @@ mod test {
 
         b.iter(|| {
             let mut result = CollisionSet::new();
-            black_box(&composite).test_composite_collision_col(
+            black_box(&composite).test_composite_collision_col4(
                 &mut result, black_box(&composite),
                 black_box(Affine2dH::rotate_hex(Wrapping(0)) *
                           Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE)),
                 black_box(Vhs(65536, 65536)),
-                black_box(0), black_box(0));
+                black_box(0),
+                black_box(i32x4::new(0, 1, 2, 3)), black_box(0xF));
             // Force the function to be evaluated even when inlined. Awkwardly,
             // we can't afford to actually return the `SmallVec` as it turns
             // into a large `memcpy` that completely dominates the function
