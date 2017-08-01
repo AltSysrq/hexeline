@@ -295,14 +295,21 @@ impl<'a> RowBitIter<'a> {
         composite: &'a CompositeObject<T>,
         row: i16
     ) -> (Self, i16) {
-        let row_base = composite.row_chunk_index(row);
-        let row = unsafe {
-            composite.chunks().get_unchecked(
-                row_base..row_base + (1 << composite.header().pitch()))
-        };
+        let row = composite.row(row);
         let first_chunk = unsafe { row.get_unchecked(0) };
         (Self::from(row, composite.col_index(first_chunk.col_base())),
          first_chunk.col_base())
+    }
+
+    /// Returns a partially initialised iterator positioned somewhere in the
+    /// given row, and the index of the first column in that row.
+    fn in_row<T : Borrow<[i32x4]>>(
+        composite: &'a CompositeObject<T>,
+        row: i16
+    ) -> (Self, i16) {
+        let row = composite.row(row);
+        let ix = unsafe { row.get_unchecked(0) }.col_base();
+        (RowBitIter { row, next_chunk: 0, current: 0 }, ix)
     }
 
     fn from(row: &'a [Chunk], col: ChunkRowCoord) -> Self {
@@ -550,6 +557,16 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         row.to_u32()
     }
 
+    /// Returns the chunks in the given row.
+    #[inline(always)]
+    fn row(&self, row: i16) -> &[Chunk] {
+        let row_base = self.row_chunk_index(row);
+        unsafe {
+            self.chunks().get_unchecked(
+                row_base..row_base + (1 << self.header().pitch()))
+        }
+    }
+
     /// Returns the chunk offset (within the row) and bit (as a multiple of
     /// two) of the given column.
     #[inline(always)]
@@ -648,7 +665,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
 
     fn cells_in_row_rbi(&self, row: i16, first_col: i16, last_col: i16)
                         -> (RowBitIter, i16, i16) {
-        let (mut bits, base) = RowBitIter::start_of_row(self, row);
+        let (mut bits, base) = RowBitIter::in_row(self, row);
         let actual_start = max(base as i32, first_col as i32);
         let actual_end = min(
             (base as i32) + ((CHUNK_WIDTH as i32) << self.header().pitch()),
