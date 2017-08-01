@@ -443,7 +443,7 @@ impl<'a> Iterator for RowNybbleIter<'a> {
         let mut mask = (head | (head >> 3)) as u32;
         let cnt = self.next_off + n / 2;
 
-        self.inner. current >>= n + 8;
+        self.inner.current >>= n + 8;
         self.next_off = 4;
 
         // See if this finishes the chunk
