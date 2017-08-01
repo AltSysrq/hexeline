@@ -784,8 +784,6 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         that: &CompositeObject<R>, that_obj: CommonObject,
         self_inverse_rot_xform: Affine2dH
     ) {
-        // TODO Could be faster via first approximation
-
         dst.clear();
 
         // To check the collision, we first take the bounding rhombus of `that`
@@ -854,7 +852,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn test_composite_collision_row<R : Borrow<[i32x4]>>(
         &self, dst: &mut CollisionSet,
         that: &CompositeObject<R>,
@@ -862,42 +860,22 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         row_zero: Vhs, row: i16,
         first_col: i16, last_col: i16
     ) {
-        let mut iter = self.cells_in_subrow(row, first_col, last_col);
-        loop {
-            let mut cols = i32x4::splat(0);
-            let mut mask = 0;
-            if let Some(col) = iter.next() {
-                cols = cols.replace(0, col as i32);
-                mask |= 1;
-                if let Some(col) = iter.next() {
-                    cols = cols.replace(1, col as i32);
-                    mask |= 2;
-                    if let Some(col) = iter.next() {
-                        cols = cols.replace(2, col as i32);
-                        mask |= 4;
-                        if let Some(col) = iter.next() {
-                            cols = cols.replace(3, col as i32);
-                            mask |= 8;
-                        }
-                    }
-                }
-            } else {
-                break;
-            }
-
+        for (cols, mask) in self.cells4_in_subrow_approx(
+            row, first_col, last_col)
+        {
             self.test_composite_collision_col4(
-                dst, that, grid_displacement, row_zero, row, cols, mask);
-            if 0xF != mask { break; }
+                dst, that, grid_displacement, row_zero, row, cols,
+                last_col, mask);
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn test_composite_collision_col4<R : Borrow<[i32x4]>>(
         &self, dst: &mut CollisionSet,
         that: &CompositeObject<R>,
         grid_displacement: Vhl,
         row_zero: Vhs,
-        row: i16, col: i32x4,
+        row: i16, col: i32x4, last_col: i16,
         mask: u32
     ) {
         let nominal_a = i32x4::splat(row_zero.a()) +
@@ -928,7 +906,11 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let to_check = mask & a_in_bounds.movemask();
         macro_rules! check_lane {
             ($lane:expr, $chunk:expr) => {{
-                if 0 != to_check & (1 << $lane) {
+                if 0 != to_check & (1 << $lane) &&
+                    // The column iterator may go out of bounds, so skip if
+                    // that happened.
+                    col.extract($lane) < last_col as i32
+                {
                     let neighbourhood = $chunk.neighbourhood(
                         col_coords.extract($lane) as u16);
                     let b = approx_b.extract($lane);
@@ -1557,7 +1539,8 @@ mod test {
                           Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE)),
                 black_box(Vhs(65536, 65536)),
                 black_box(0),
-                black_box(i32x4::new(0, 1, 2, 3)), black_box(0xF));
+                black_box(i32x4::new(0, 1, 2, 3)), black_box(3),
+                black_box(0xF));
             // Force the function to be evaluated even when inlined. Awkwardly,
             // we can't afford to actually return the `SmallVec` as it turns
             // into a large `memcpy` that completely dominates the function
