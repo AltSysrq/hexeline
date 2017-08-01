@@ -280,8 +280,13 @@ fn prepare_rbi_chunk(chunk: Chunk) -> u64 {
 /// end. This also means the last value is meaningless.
 #[derive(Clone, Copy, Debug)]
 struct RowBitIter<'a> {
+    /// The data for this row. Always a power of two in length.
     row: &'a [Chunk],
+    /// The index in `row` of the next chunk to load.
     next_chunk: usize,
+    /// The current chunk. Prepared with `prepare_rbi_chunk`. This is
+    /// essentially a bitset of all cells in this row at odd bit indices, with
+    /// a 1 bit sentinel after the very last bit.
     current: u64,
 }
 
@@ -315,10 +320,6 @@ impl<'a> RowBitIter<'a> {
         self.current = prepare_rbi_chunk(unsafe {
             *self.row.get_unchecked(col.chunk as usize)
         }) >> col.bit;
-    }
-
-    fn is_row_nonempty(&self) -> bool {
-        self.row.iter().any(|chunk| chunk.has_any_on_row())
     }
 
     fn scan_through(self, base: i16, end: i16)
@@ -363,6 +364,99 @@ impl<'a> Iterator for RowBitIter<'a> {
                 return Some(ret);
             }
         }
+    }
+}
+
+/// Wrapper around `RowBitIter` which returns bits 4 at a time.
+///
+/// Each iterator item is an offset from the *start* of the previous item to
+/// the start of the new item, and a bitmask of up to 4 cells from that
+/// position, at offsets 0, 2, 1, and 3, in that order.
+///
+/// Returned bitsets may be incomplete; i.e., a 0 bit does not indicate that
+/// the cell is definitely not there; the next iteration may return an item
+/// indicating that it does exist.
+///
+/// Returned bitsets may have arbitrary bits above bit 3 set; these have no
+/// particular meaning.
+///
+/// The iterator will occasionally return completely zero bitsets as well.
+///
+/// Like `RowBitIter`, this iterator is infinite.
+#[derive(Clone, Copy, Debug)]
+struct RowNybbleIter<'a> {
+    inner: RowBitIter<'a>,
+    /// The base offset to apply to the next item. This is used to account for
+    /// the actual width of the prior bitset.
+    next_off: u32,
+}
+
+impl<'a> RowNybbleIter<'a> {
+    fn wrap(inner: RowBitIter<'a>) -> Self {
+        RowNybbleIter { inner, next_off: 0 }
+    }
+
+    /// Adapt this iterator to return column coordinates and bitmasks.
+    ///
+    /// Zero items are filtered out.
+    ///
+    /// `end` is only approximate; the iterator may iterate slightly beyond it.
+    fn scan_through(self, base: i16, end: i16)
+                    -> impl 'a + Iterator<Item = (i32x4,u32)> {
+        self.scan(base,
+                  |accum, (step, mask)| {
+                      *accum += step as i16;
+                      Some((*accum, mask))
+                  })
+            .take_while(move |&(ix, _)| ix < end)
+            .filter(|&(_, mask)| 0 != mask & 0xF)
+            .map(|(base, mask)| (i32x4::splat(base as i32) +
+                                 i32x4::new(0, 2, 1, 3), mask))
+    }
+}
+
+impl<'a> Iterator for RowNybbleIter<'a> {
+    type Item = (u32, u32);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<(u32,u32)> {
+        let n = self.inner.current.trailing_zeros();
+        let head = self.inner.current >> n;
+        // Squash from
+        //
+        // 76543210
+        // -3-2-1-0
+        //
+        // to
+        //
+        // 3210
+        // 3120
+        //
+        // i.e, shift 4 to 1 and 6 to 3
+        let mut mask = (head | (head >> 3)) as u32;
+        let cnt = self.next_off + n / 2;
+
+        self.inner. current >>= n + 8;
+        self.next_off = 4;
+
+        // See if this finishes the chunk
+        if 0 == self.inner.current {
+            // We've consumed the sentinel, remove it
+            let lz = head.leading_zeros();
+            let mm = 1 << (63 - lz);
+            mask ^= mm | (mm >> 3);
+
+            // Fix the stride of the next item
+            self.next_off = (63 - lz)/2;
+
+            self.inner.current = prepare_rbi_chunk(unsafe {
+                *self.inner.row.get_unchecked(self.inner.next_chunk)
+            });
+            self.inner.next_chunk = (self.inner.next_chunk + 1) &
+                (self.inner.row.len() - 1);
+        }
+
+        Some((cnt, mask))
     }
 }
 
@@ -552,11 +646,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         bits.scan_through(base as i16, end)
     }
 
-    /// Returns an iterator over the logical indices of populated columns in
-    /// the given logical row, where the column indices are between `first_col`
-    /// (inclusive) and `last_col` (exclusive).
-    pub fn cells_in_subrow<'a>(&'a self, row: i16, first_col: i16, last_col: i16)
-                               -> impl 'a + Iterator<Item = i16> {
+    fn cells_in_row_rbi(&self, row: i16, first_col: i16, last_col: i16)
+                        -> (RowBitIter, i16, i16) {
         let (mut bits, base) = RowBitIter::start_of_row(self, row);
         let actual_start = max(base as i32, first_col as i32);
         let actual_end = min(
@@ -565,8 +656,35 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let actual_len = actual_end - actual_start;
 
         bits.reset(self.col_index(actual_start as i16));
-        bits.scan_through(actual_start as i16,
-                          (actual_start + actual_len) as i16)
+        (bits, actual_start as i16, (actual_start + actual_len) as i16)
+    }
+
+    /// Returns an iterator over the logical indices of populated columns in
+    /// the given logical row, where the column indices are between `first_col`
+    /// (inclusive) and `last_col` (exclusive).
+    pub fn cells_in_subrow<'a>(&'a self, row: i16,
+                               first_col: i16, last_col: i16)
+                               -> impl 'a + Iterator<Item = i16> {
+        let (bits, start, end) = self.cells_in_row_rbi(
+            row, first_col, last_col);
+        bits.scan_through(start, end)
+    }
+
+    /// Like `cells_in_subrow`, but return an iterator which produces columns 4
+    /// at a time.
+    ///
+    /// Each quadruplet is accompanied by a mask of which columns actually have
+    /// cells.
+    ///
+    /// This is "approximate" in that it will generally overshoot `last_col`,
+    /// potentially including cells beyond it or even out of bounds.
+    pub fn cells4_in_subrow_approx<'a>
+        (&'a self, row: i16, first_col: i16, last_col: i16)
+         -> impl 'a + Iterator<Item = (i32x4, u32)>
+    {
+        let (bits, start, end) = self.cells_in_row_rbi(
+            row, first_col, last_col);
+        RowNybbleIter::wrap(bits).scan_through(start, end)
     }
 
     /// Returns an iterator over the logical indices of cells which are
@@ -736,7 +854,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn test_composite_collision_row<R : Borrow<[i32x4]>>(
         &self, dst: &mut CollisionSet,
         that: &CompositeObject<R>,
@@ -773,7 +891,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         }
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn test_composite_collision_col4<R : Borrow<[i32x4]>>(
         &self, dst: &mut CollisionSet,
         that: &CompositeObject<R>,
@@ -1197,6 +1315,35 @@ mod test {
             }
         }
 
+        #[test]
+        fn nybble_iter_same_as_bit_iterator(
+            ref c in arb_composite()
+        ) {
+            for row in c.data.rows() {
+                let expected = c.data.cells_in_row(row)
+                    .collect::<BTreeSet<_>>();
+                let min = expected.iter().next().cloned().unwrap_or(0);
+                let max = expected.iter().next_back().cloned().unwrap_or(min);
+
+                let mut expected_sloppy = expected.clone();
+                expected_sloppy.extend((1..4).map(|v| v+max));
+
+                let actual = c.data.cells4_in_subrow_approx(row, min, max+1)
+                    .flat_map(|(cols, mask)| (0..4)
+                              .filter(move |&lane| 0 != mask & (1 << lane))
+                              .map(move |lane| cols.extract(lane) as i16))
+                    .collect::<BTreeSet<_>>();
+
+                let not_iterated = expected.difference(&actual)
+                    .collect::<Vec<_>>();
+                assert!(not_iterated.is_empty(),
+                        "Failed to iterate cells {:?}", not_iterated);
+                let not_expected = actual.difference(&expected_sloppy)
+                    .collect::<Vec<_>>();
+                assert!(not_expected.is_empty(),
+                        "Iterated unexpected cells {:?}", not_expected);
+            }
+        }
     }
 
     proptest! {
