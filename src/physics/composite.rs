@@ -1491,6 +1491,15 @@ mod test {
         });
     }
 
+    // Current timing on main test system based on this and more isolated
+    // benchmarks:
+    //
+    // 13ns per col4 call, called 4 times, 52ns
+    // 37ns per row call (24ns self), called 4 times, 96ns
+    // 48ns before entering the row loop
+    // Subtotal is 196ns, reasonably close to the actual time of 203ns
+    //
+    // Main focus for now then is to continue improving the iterator.
     #[bench]
     fn bench_cc_collision_4x4_noncolliding(b: &mut Bencher) {
         let composite = unsafe {
