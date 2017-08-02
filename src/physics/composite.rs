@@ -630,11 +630,14 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     }
 
     /// Return whether `a` is an in-bounds cell row for this composite.
+    ///
+    /// The valid range includes the blank row at the beginning but excludes
+    /// padding rows at the end.
     #[inline(always)]
     pub fn is_in_a_bound(&self, a: i16) -> bool {
         let header = self.header();
         let row = (a - header.row_offset()) as u32;
-        row < 1 << header.rows()
+        row <= header.row_count() as u32
     }
 
     /// Return whether `b` is an in-bounds cell column for this composite
