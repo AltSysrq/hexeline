@@ -447,7 +447,7 @@ impl<'a> Iterator for RowNybbleIter<'a> {
         self.next_off = 4;
 
         // See if this finishes the chunk
-        if 0 == self.inner.current {
+        if unlikely!(0 == self.inner.current) {
             // We've consumed the sentinel, remove it
             let lz = head.leading_zeros();
             let mm = 1 << (63 - lz);
