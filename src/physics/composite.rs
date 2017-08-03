@@ -125,21 +125,6 @@ impl fmt::Debug for CompositeHeader {
     }
 }
 
-// TODO Move docs, fully implement
-//
-// The idea here is to store for each cell a bitset for its (0,0)..(1,1)
-// neighbourhood. To save space, we overlap items in the same row, such that we
-// can pack 24 cells into the low 50 bits of an i64. The upper 14 bits store
-// the signed column offset, which is replicated for every chunk, even rows
-// which have more than once chunk.
-//
-// This means that collision tests can be reduced to exactly one memory access
-// per test point, since both all possible cells and the column offset
-// (effectively for both rows) are available in the same pace.
-//
-// Building the bitset will be more complex since a given cell could affect up
-// to 4 bits.
-
 /// The number of cells packed into a single chunk.
 ///
 /// Parts of the implementation depend strongly on this value, so don't change
