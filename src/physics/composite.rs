@@ -857,7 +857,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
                             self.header().row_offset() as i32 + 1);
         let last_row = min(that_bounds_self_grid.extract(2),
                            self.header().row_offset() as i32 +
-                           self.header().row_count() as i32 + 1);
+                           self.header().row_count() as i32);
         let mut row_zero: Vhs = self_origin_that_grid +
             grid_displacement.fst() * Vhs(first_row, first_row);
 
