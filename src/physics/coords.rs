@@ -540,6 +540,16 @@ impl Vos {
 }
 
 impl Vhs {
+    /// Approximates the values returned by `to_grid()` and
+    /// `to_grid_overlap()`.
+    ///
+    /// Any in-bounds values returned by those functions is offset by `<0,0>`,
+    /// `<1,0>`, `<0,1>`, or `<1,1>` of the value returned by this call.
+    #[inline(always)]
+    pub fn to_grid_approx(self) -> Vhs {
+        self >> CELL_HEX_SHIFT
+    }
+
     #[inline(always)]
     fn to_grid(self) -> (i32x4, i32x4, i32x4) {
         // The core idea here is that we'll be rounding A and B up or down to the
@@ -553,13 +563,13 @@ impl Vhs {
         // Put A and B in their own registers
         let base_a = i32x4::splat(self.a());
         let base_b = i32x4::splat(self.b());
-        // Calculate our rounding options. Note that for A we round up in the last
-        // two lanes, where for B we round up in the odd numbered lanes.
+        // Calculate our rounding options. Note that for B we round up in the last
+        // two lanes, where for A we round up in the odd numbered lanes.
         let rounded_a =
-            (base_a + i32x4::new(0, 0, CELL_HEX_MASK+1, CELL_HEX_MASK+1)) &
+            (base_a + i32x4::new(0, CELL_HEX_MASK+1, 0, CELL_HEX_MASK+1)) &
             i32x4::splat(!CELL_HEX_MASK);
         let rounded_b =
-            (base_b + i32x4::new(0, CELL_HEX_MASK+1, 0, CELL_HEX_MASK+1)) &
+            (base_b + i32x4::new(0, 0, CELL_HEX_MASK+1, CELL_HEX_MASK+1)) &
             i32x4::splat(!CELL_HEX_MASK);
         // Compute the residue for all for options, as well as for C
         let a_residue = rounded_a - base_a;
@@ -598,14 +608,32 @@ impl Vhs {
         //                     1  1  0  1  0  1  0  1  ?
         //                     0  ?  ?  ?  ?  ?  ?  ?  1
         //                choose  3  3  3  3  2  2  1  0
-        let valid_shuf_tab_a = 0b_1__1__1__1__1__1__0__0u16;
-        let valid_shuf_tab_b = 0b_1__1__1__1__0__0__1__0u16;
+        let valid_shuf_tab_b = 0b_1__1__1__1__1__1__0__0u16;
+        let valid_shuf_tab_a = 0b_1__1__1__1__0__0__1__0u16;
         let shuf_ix = valid_bits >> 1;
         let a_off = (valid_shuf_tab_a >> shuf_ix) as i32 & 1;
         let b_off = (valid_shuf_tab_b >> shuf_ix) as i32 & 1;
 
         let coord = self.repr() >> CELL_HEX_SHIFT;
         (coord.extract(0) + a_off, coord.extract(1) + b_off)
+    }
+
+    #[inline(always)]
+    fn to_grid_overlap_validity(self) -> (i32x4, i32x4, i32x4) {
+        let (a, b, residue) = self.to_grid();
+        let valid_mask = residue - i32x4::splat(2 * CELL_HEX_SIZE);
+        (a, b, valid_mask)
+    }
+
+    /// Assuming this point refers to the centre of an axis-aligned hexagon,
+    /// determine which hexagonal grid points overlap with that hexagon.
+    ///
+    /// Returns a 4-bit bitset indicating offsets `<0,0>`, `<1,0>`, `<0,1>`,
+    /// `<1,1>` from `to_grid_approx()`, in that order.
+    #[inline(always)]
+    pub fn to_grid_overlap_mask(self) -> u32 {
+        let (_, _, valid_mask) = self.to_grid_overlap_validity();
+        valid_mask.movemask()
     }
 
     /// Assuming this point refers to the centre of an axis-aligned hexagon,
@@ -616,8 +644,7 @@ impl Vhs {
     /// slots, and are distinguished by having a value of -32768.
     #[inline(always)]
     pub fn to_grid_overlap(self) -> (i32x4, i32x4) {
-        let (a, b, residue) = self.to_grid();
-        let valid_mask = residue - i32x4::splat(2 * CELL_HEX_SIZE);
+        let (a, b, valid_mask) = self.to_grid_overlap_validity();
         let a: i32x4 = a >> CELL_HEX_SHIFT;
         let b: i32x4 = b >> CELL_HEX_SHIFT;
         let mask = bool32ix4::from_repr(valid_mask >> 31);
@@ -688,6 +715,11 @@ mod test {
         b.iter(|| black_box(Vhs(65536, 65536)).to_grid_overlap())
     }
 
+    #[bench]
+    fn bench_vhs_to_grid_overlap_mask(b: &mut Bencher) {
+        b.iter(|| black_box(Vhs(65536, 65536)).to_grid_overlap_mask())
+    }
+
     #[test]
     fn vos_to_vhr_smoke_test() {
         // Check a few basic properties. This doesn't exhaustively check that
@@ -750,7 +782,7 @@ mod test {
             }
         }
 
-        assert_eq!(5086880218595302901, hasher.finish());
+        assert_eq!(3927057143629328181, hasher.finish());
     }
 
     #[test]

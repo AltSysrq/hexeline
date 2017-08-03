@@ -14,7 +14,7 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #![feature(test, platform_intrinsics, cfg_target_feature,
-           conservative_impl_trait)]
+           conservative_impl_trait, core_intrinsics)]
 #![allow(dead_code)]
 
 extern crate arrayvec;
@@ -38,6 +38,8 @@ use std::io::{self, Write};
 
 use gl::types::*;
 
+#[macro_use]
+mod boolext;
 mod intext;
 mod simdext;
 #[macro_use]

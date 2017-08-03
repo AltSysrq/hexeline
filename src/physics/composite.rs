@@ -32,16 +32,17 @@
 //! the integer (A,B) coordinates of each cell, with A being used as a row
 //! index and B as a column index.
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, BorrowMut};
 use std::cmp::{max, min};
 use std::fmt;
 use std::i16;
-use std::ptr;
+use std::slice;
 
 use arrayvec::ArrayVec;
 use simd::*;
 use smallvec::{Array, SmallVec};
 
+use simdext::*;
 use intext::*;
 use physics::common_object::*;
 use physics::coords::*;
@@ -61,6 +62,9 @@ pub struct UnpackedCompositeHeader {
     pub row_offset: i16,
     /// The power of two of the number of rows in this composite.
     pub rows: u8,
+    /// The actual number of rows in this composite, excluding the empty first
+    /// row and any padding rows after the last one.
+    pub row_count: u16,
     /// The power of two of the width, in cells, of each row.
     pub pitch: u8,
     /// The mass of this object.
@@ -74,6 +78,7 @@ impl UnpackedCompositeHeader {
             .with_b_offset(self.b_offset)
             .with_row_offset(self.row_offset)
             .with_rows(self.rows)
+            .with_row_count(self.row_count)
             .with_pitch(self.pitch)
             .with_mass(self.mass)
     }
@@ -93,6 +98,7 @@ impl CompositeHeader {
     packed_field!(0:2[16..23]:  u8 rows, set_rows, with_rows);
     packed_field!(0:2[24..31]:  u8 pitch, set_pitch, with_pitch);
     packed_field!(0:3[ 0..15]: u16 mass, set_mass, with_mass);
+    packed_field!(0:3[16..31]: u16 row_count, set_row_count, with_row_count);
 
     /// Return the (a_offset, b_offset) vector.
     #[inline(always)]
@@ -106,6 +112,7 @@ impl CompositeHeader {
             b_offset: self.b_offset(),
             row_offset: self.row_offset(),
             rows: self.rows(),
+            row_count: self.row_count(),
             pitch: self.pitch(),
             mass: self.mass(),
         }
@@ -118,6 +125,333 @@ impl fmt::Debug for CompositeHeader {
     }
 }
 
+/// The number of cells packed into a single chunk.
+///
+/// Parts of the implementation depend strongly on this value, so don't change
+/// it lightly.
+pub const CHUNK_WIDTH: u32 = 24;
+
+/// A chunk of the composite cell bitmap.
+///
+/// Each chunk represents up to `CHUNK_WIDTH` cells on the same row.
+/// Additionally, it holds a bit for the `CHUNK_WIDTH+1`th cell on the row, as
+/// well as the same range of cells on the next row (which may not be a
+/// complete representation of that row).
+///
+/// Cell indices within a chunk are always even numbers between 0 and
+/// CHUNK_WIDTH*2.
+///
+/// Additionally, each chunk stores the column offset for the row it is found
+/// within.
+#[derive(Clone, Copy)]
+pub struct Chunk(i64);
+
+impl Chunk {
+    /// Returns the column base for this row.
+    ///
+    /// That is, the minimum B coordinate of any cell slot in this row.
+    #[inline(always)]
+    pub fn col_base(self) -> i16 {
+        (self.0 >> 50) as i16
+    }
+
+    #[inline(always)]
+    fn assert_valid_index(ix: u16) {
+        debug_assert!(0 == ix & 1 && (ix as u32) <= CHUNK_WIDTH*2);
+    }
+
+    /// Returns the neighbourhood around the `ix`th cell in this chunk.
+    #[inline(always)]
+    pub fn neighbourhood(self, ix: u16) -> Neighbourhood {
+        Chunk::assert_valid_index(ix);
+        Neighbourhood((self.0 >> ix) as u32 & 0xF)
+    }
+
+    /// Returns whether the cell at the given index is populated.
+    #[inline(always)]
+    pub fn is_populated(self, ix: u16) -> bool {
+        Chunk::assert_valid_index(ix);
+        0 != (self.0 >> ix) & 1
+    }
+
+    /// Returns whether any cells belonging to this row are present in this
+    /// chunk.
+    #[inline(always)]
+    pub fn has_any_on_row(self) -> bool {
+        0 != self.0 & 0x555555555555
+    }
+
+    fn set_col0(&mut self, col: u16) {
+        self.0 |= 1 << col;
+    }
+
+    fn set_col1(&mut self, col: u16) {
+        self.0 |= 1 << col+1;
+    }
+
+    fn set_col_base(&mut self, base: i16) {
+        self.0 |= (base as i64) << 50;
+    }
+}
+
+impl fmt::Debug for Chunk {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Chunk({},{:048b})", self.col_base(),
+               self.0 & ((1 << 2*CHUNK_WIDTH) - 1))
+    }
+}
+
+/// A 2x2 neighbourhood of the cell bitmap.
+#[derive(Clone, Copy, Debug)]
+pub struct Neighbourhood(u32);
+
+impl Neighbourhood {
+    /// Returns whether any cells in the neighbourhood are present.
+    #[inline(always)]
+    pub fn any(self) -> bool {
+        0 != self.0
+    }
+
+    /// Returns whether the cell at <0,0> is present.
+    #[inline(always)]
+    pub fn c00(self) -> bool {
+        0 != self.0 & 1
+    }
+
+    /// Returns whether the cell at <1,0> is present.
+    #[inline(always)]
+    pub fn c10(self) -> bool {
+        0 != self.0 & 2
+    }
+
+    /// Returns whether the cell at <0,1> is present.
+    #[inline(always)]
+    pub fn c01(self) -> bool {
+        0 != self.0 & 4
+    }
+
+    /// Returns whether the cell at <1,1> is present.
+    #[inline(always)]
+    pub fn c11(self) -> bool {
+        0 != self.0 & 8
+    }
+
+    /// Returns the neighbourhood of cells which are overlapped by the unit
+    /// hexagon at `v`.
+    pub fn hits(self, v: Vhs) -> Self {
+        Neighbourhood(self.0 & v.to_grid_overlap_mask())
+    }
+}
+
+/// A coordinate of a chunk and bit within a row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkRowCoord {
+    /// The offset of the chunk within the row.
+    pub chunk: u16,
+    /// The bit (always a multiple of two) within the chunk.
+    pub bit: u16,
+}
+
+fn prepare_rbi_chunk(chunk: Chunk) -> u64 {
+    // Filter out everything other than the cells we care about, then put a
+    // sentinel of 1 at the top (which will get right-shifted to 0 when the
+    // scanner reaches the end).
+    chunk.0 as u64 & 0x555555555555 | (1 << 2*CHUNK_WIDTH)
+}
+
+/// An iterator which returns offsets of present cells within a row.
+///
+/// The iterator is infinite; it simply wraps around every time it reaches the
+/// end. This also means the last value is meaningless.
+#[derive(Clone, Copy, Debug)]
+struct RowBitIter<'a> {
+    /// The data for this row. Always a power of two in length.
+    row: &'a [Chunk],
+    /// The index in `row` of the next chunk to load.
+    next_chunk: usize,
+    /// The current chunk. Prepared with `prepare_rbi_chunk`. This is
+    /// essentially a bitset of all cells in this row at odd bit indices, with
+    /// a 1 bit sentinel after the very last bit.
+    current: u64,
+}
+
+impl<'a> RowBitIter<'a> {
+    fn start_of_row<T : Borrow<[i32x4]>>(
+        composite: &'a CompositeObject<T>,
+        row: i16
+    ) -> (Self, i16) {
+        let row = composite.row(row);
+        let first_chunk = unsafe { row.get_unchecked(0) };
+        (Self::from(row, composite.col_index(first_chunk.col_base())),
+         first_chunk.col_base())
+    }
+
+    /// Returns a partially initialised iterator positioned somewhere in the
+    /// given row, and the index of the first column in that row.
+    fn in_row<T : Borrow<[i32x4]>>(
+        composite: &'a CompositeObject<T>,
+        row: i16
+    ) -> (Self, i16) {
+        let row = composite.row(row);
+        let ix = unsafe { row.get_unchecked(0) }.col_base();
+        (RowBitIter { row, next_chunk: 0, current: 0 }, ix)
+    }
+
+    fn from(row: &'a [Chunk], col: ChunkRowCoord) -> Self {
+        let mut this = RowBitIter {
+            row,
+            next_chunk: 0,
+            current: 0,
+        };
+        this.reset(col);
+        this
+    }
+
+    fn reset(&mut self, col: ChunkRowCoord) {
+        self.next_chunk = (col.chunk as usize + 1) & (self.row.len() - 1);
+        self.current = prepare_rbi_chunk(unsafe {
+            *self.row.get_unchecked(col.chunk as usize)
+        }) >> col.bit;
+    }
+
+    fn scan_through(self, base: i16, end: i16)
+                    -> impl 'a + Iterator<Item = i16> {
+        // Need to offset base by 1 since each iteration returns at least 1 but
+        // if there's a cell in the first one, we want an output of `base`.
+        self.scan(base - 1,
+                  |accum, step| { *accum += step as i16; Some(*accum) })
+            .take_while(move |&val| val < end)
+    }
+}
+
+impl<'a> Iterator for RowBitIter<'a> {
+    type Item = u32;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<u32> {
+        let mut ret = 0;
+        let mut cycles = 0;
+
+        loop {
+            let n = self.current.trailing_zeros() + 2;
+            self.current >>= n;
+            ret += n / 2;
+
+            if 0 == self.current {
+                // We counted the sentinel as a cell; fix that
+                ret -= 1;
+
+                self.current = prepare_rbi_chunk(unsafe {
+                    *self.row.get_unchecked(self.next_chunk)
+                });
+                self.next_chunk = (self.next_chunk + 1) &
+                    (self.row.len() - 1);
+                cycles += 1;
+
+                // If the whole row is empty, we can't ever return anything.
+                if cycles > self.row.len() {
+                    return None;
+                }
+            } else {
+                return Some(ret);
+            }
+        }
+    }
+}
+
+/// Wrapper around `RowBitIter` which returns bits 4 at a time.
+///
+/// Each iterator item is an offset from the *start* of the previous item to
+/// the start of the new item, and a bitmask of up to 4 cells from that
+/// position, at offsets 0, 2, 1, and 3, in that order.
+///
+/// Returned bitsets may be incomplete; i.e., a 0 bit does not indicate that
+/// the cell is definitely not there; the next iteration may return an item
+/// indicating that it does exist.
+///
+/// Returned bitsets may have arbitrary bits above bit 3 set; these have no
+/// particular meaning.
+///
+/// The iterator will occasionally return completely zero bitsets as well.
+///
+/// Like `RowBitIter`, this iterator is infinite.
+#[derive(Clone, Copy, Debug)]
+struct RowNybbleIter<'a> {
+    inner: RowBitIter<'a>,
+    /// The base offset to apply to the next item. This is used to account for
+    /// the actual width of the prior bitset.
+    next_off: u32,
+}
+
+impl<'a> RowNybbleIter<'a> {
+    fn wrap(inner: RowBitIter<'a>) -> Self {
+        RowNybbleIter { inner, next_off: 0 }
+    }
+
+    /// Adapt this iterator to return column coordinates and bitmasks.
+    ///
+    /// Zero items are filtered out.
+    ///
+    /// `end` is only approximate; the iterator may iterate slightly beyond it.
+    fn scan_through(self, base: i16, end: i16)
+                    -> impl 'a + Iterator<Item = (i32x4,u32)> {
+        self.scan(base,
+                  |accum, (step, mask)| {
+                      *accum += step as i16;
+                      Some((*accum, mask))
+                  })
+            .take_while(move |&(ix, _)| ix < end)
+            .filter(|&(_, mask)| 0 != mask & 0xF)
+            .map(|(base, mask)| (i32x4::splat(base as i32) +
+                                 i32x4::new(0, 2, 1, 3), mask))
+    }
+}
+
+impl<'a> Iterator for RowNybbleIter<'a> {
+    type Item = (u32, u32);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<(u32,u32)> {
+        let n = self.inner.current.trailing_zeros();
+        let head = self.inner.current >> n;
+        // Squash from
+        //
+        // 76543210
+        // -3-2-1-0
+        //
+        // to
+        //
+        // 3210
+        // 3120
+        //
+        // i.e, shift 4 to 1 and 6 to 3
+        let mut mask = (head | (head >> 3)) as u32;
+        let cnt = self.next_off + n / 2;
+
+        self.inner.current >>= n + 8;
+        self.next_off = 4;
+
+        // See if this finishes the chunk
+        if unlikely!(0 == self.inner.current) {
+            // We've consumed the sentinel, remove it
+            let lz = head.leading_zeros();
+            let mm = 1 << (63 - lz);
+            mask ^= mm | (mm >> 3);
+
+            // Fix the stride of the next item
+            self.next_off = (63 - lz)/2;
+
+            self.inner.current = prepare_rbi_chunk(unsafe {
+                *self.inner.row.get_unchecked(self.inner.next_chunk)
+            });
+            self.inner.next_chunk = (self.inner.next_chunk + 1) &
+                (self.inner.row.len() - 1);
+        }
+
+        Some((cnt, mask))
+    }
+}
+
 pub const COLLISION_SET_SIZE: usize = 16;
 pub type CollisionSet = ArrayVec<[[(i16,i16);2];COLLISION_SET_SIZE]>;
 
@@ -125,20 +459,48 @@ pub type CollisionSet = ArrayVec<[[(i16,i16);2];COLLISION_SET_SIZE]>;
 ///
 /// The first word in a composite is always a `CompositeHeader`.
 ///
-/// This is followed by the population bitset. A given cell (A,B) is found at
-/// bit `((A & ((1 << rows) - 1)) << pitch) + (B & ((1 << pitch) - 1))`. The
-/// use of modular arithmetic means that no bounds checks are necessary in
-/// exchange for false positives, allowing the bounds checks to be moved until
-/// after testing the bitset.
+/// This is followed by an array of `Chunk`s of length `1 << rows << pitch`.
 ///
-/// This is followed by the column offset array, which has a length equal to
-/// `rows`. If the pitch is less than 128 (i.e., `pitch < 7`), each value is an
-/// `i8`, packed 16 per word; otherwise, each value is an `i16`, packed 8 per
-/// word. Each value in the column offset array gives the minimum B coordinate
-/// of any populated cell in that row; the valid range for each row is thus the
-/// `column_offset` to `column_offset + (1 << pitch) - 1`.
+/// `Chunk`s are grouped into rows, where each row is `1 << pitch` `Chunk`s
+/// wide. Given the `A` coordinate of a cell, the cell is found in row
+/// `A & ((1 << rows) - 1)`, which allows addressing the rows without prior
+/// bounds checks or needing to take `row_offset` into account.
 ///
-/// The bitset is padded to a multiple of 16 bits.
+/// Each row encodes a neighbourhood bitset for `CHUNK_WIDTH << pitch` cell
+/// slots. Given the `B` coordinate of a cell, the cell's neighbourhood is
+/// found in slot `B % (CHUNK_WIDTH << pitch)`, i.e., chunk
+/// `(B / CHUNK_WIDTH) & ((1 << pitch) - 1)`, chunk slot `B % CHUNK_WIDTH`. As
+/// with row access, this means no bounds checking is needed prior to accessing
+/// the cell, which is particularly important as the bounds are not known until
+/// the chunk is loaded.
+///
+/// Each row stores the neighbourhood of cells starting at `col_base` and going
+/// up to `col_base + (CHUNK_WIDTH << pitch)`. `col_base` varies per column,
+/// and is stored as a 14-bit signed integer in every `Chunk`.
+///
+/// The other 50 bits of a `Chunk` is a bitset of present cells, including
+/// their neighbourhood. Given the index of a cell in the chunk, the bit at
+/// `index+0` indicates whether that cell is present; `index+1` indicates
+/// whether the cell offset by `<1,0>` is present; `index+2`, `<0,1>`, and
+/// `index+3`, `<1,1>`. Adjacent cells in the same row have overlapping
+/// neighbourhoods, such that each cell only takes two bits of space, except
+/// for the final cell in each `Chunk`, which has the left-most two bits of the
+/// next cell on the row, though that cell is properly found in the next
+/// `Chunk`.
+///
+/// Every row is sized so that its bitset represents not only the cells on that
+/// row, but also the cells on the next row.
+///
+/// Every row is padded with an empty column at the start and the composite as
+/// a whole with an empty row at the top. This means that inspecting the
+/// neighbourhood of an out-of-bounds-by-minus-one cell will still reveal
+/// populated in-bounds cells. Due to modular indexing, it also ensures that
+/// inspecting the last in-bounds cell will have empty bits for its
+/// out-of-bounds neighbourhood.
+///
+/// There is no need to concern with padding after the `Chunk` array, as any
+/// non-empty composite will have at least two rows due to the insertion of an
+/// empty row at the top.
 #[derive(Clone, Copy)]
 pub struct CompositeObject<T : Borrow<[i32x4]>>(T);
 
@@ -150,25 +512,97 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     }
 
     #[inline(always)]
-    fn bitset_start(&self) -> *const u8 {
-        debug_assert!(self.0.borrow().len() >= 1);
+    fn chunks(&self) -> &[Chunk] {
+        let s = self.0.borrow();
         unsafe {
-            self.0.borrow().as_ptr().offset(1) as *const u8
+            slice::from_raw_parts(
+                s.as_ptr().offset(1) as *const Chunk,
+                (s.len() - 1) * 2)
         }
     }
 
+    /// Returns the physical row index of the given row within the chunk array.
     #[inline(always)]
-    fn col_offset_array_start(&self) -> *const () {
-        let header = self.header();
-        (unsafe {
-            self.bitset_start().offset(
-                ((1 << header.rows() << header.pitch()) + 15) / 16 * 2)
-        }) as *const ()
+    fn row_phys_index(&self, row: i16) -> usize {
+        (row & ((1 << self.header().rows()) - 1)) as usize
     }
 
+    /// Returns the index of the first chunk belonging to `row` in the chunk
+    /// array.
     #[inline(always)]
-    fn use_16bit_col_offset(&self) -> bool {
-        self.header().pitch() >= 7
+    fn row_chunk_index(&self, row: i16) -> usize {
+        self.row_phys_index(row) << self.header().pitch()
+    }
+
+    /// Like `row_chunk_index`, but processes 4 rows at once.
+    #[inline(always)]
+    fn row_chunk_index4(&self, row: i32x4) -> u32x4 {
+        let row = row & i32x4::splat((1 << self.header().rows()) - 1);
+        let row: i32x4 = row << self.header().pitch();
+        row.to_u32()
+    }
+
+    /// Returns the chunks in the given row.
+    #[inline(always)]
+    fn row(&self, row: i16) -> &[Chunk] {
+        let row_base = self.row_chunk_index(row);
+        unsafe {
+            self.chunks().get_unchecked(
+                row_base..row_base + (1 << self.header().pitch()))
+        }
+    }
+
+    /// Returns the chunk offset (within the row) and bit (as a multiple of
+    /// two) of the given column.
+    #[inline(always)]
+    fn col_index(&self, col: i16) -> ChunkRowCoord {
+        // Since the % operator doesn't work in a sane way for negative
+        // integers, convert to unsigned and work with that.
+        let col = (col as u16).wrapping_add(32768);
+        // NB The optimiser fuses both of these into a single integer multiply
+        // and then a couple adds and shifts.
+        let d24 = col / 24;
+        let bit = (col % 24) << 1;
+        let chunk = d24 & ((1 << self.header().pitch()) - 1);
+        ChunkRowCoord { chunk, bit }
+    }
+
+    /// Like `col_index()`, but translates four columns at a time.
+    ///
+    /// The chunk index is stored in the high half of each lane, and the bit
+    /// index in the low half.
+    #[inline(always)]
+    fn col_index4(&self, col: i32x4) -> u32x4 {
+        // This is the code LLVM generates for `col_index`, translated to SIMD.
+        // (u32x4 doesn't have division or modulo operators since SSE has no
+        // integer division support.) Variable names are just the registers
+        // LLVM happened to choose; don't read anything special into them.
+        let esi = (col + i32x4::splat(32768)).to_u32();
+        let edx = esi * u32x4::splat(0xaaab);   // imul edx,eax,0xaaab
+        let edx: u32x4 = edx >> 0x14;           // shr edx,0x14
+        let eax: u32x4 = edx << 3;              // lea eax,[rdx*8+0x0]
+        let eax: u32x4 = eax + (eax << 1);      // lea eax,[rax+rax*2]
+        let esi = esi - eax;                    // sub esi,eax
+        let cl = self.header().pitch();         // Multiple instructions
+        let eax = u32x4::splat(1);              // mov eax,0x1
+        let eax: u32x4 = eax << cl;             // shl eax,cl
+        // LLVM's code is sightly different for some reason
+        let eax = eax - u32x4::splat(1);        // add eax,0xfff
+        let eax = eax & edx;                    // and eax,edx
+
+        // esi now holds the bit index, eax the chunk index
+        (eax << 16) | (esi << 1)
+    }
+
+    /// Load the chunk containing `(row, col)` and return that chunk and the
+    /// index of that bit within it.
+    #[inline(always)]
+    pub fn chunk(&self, row: i16, col: i16) -> (Chunk, u16) {
+        let row_base = self.row_chunk_index(row);
+        let col_index = self.col_index(col);
+        (unsafe {
+            *self.chunks().get_unchecked(row_base + col_index.chunk as usize)
+        }, col_index.bit)
     }
 
     /// Return whether the cell at `(a,b)` is populated.
@@ -176,85 +610,93 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     /// If `(a,b)` is not in range, the result is unspecified but safe.
     #[inline(always)]
     pub fn is_populated(&self, a: i16, b: i16) -> bool {
-        let header = self.header();
-        let row = (a & ((1 << header.rows()) - 1)) as usize;
-        let col = (b & ((1 << header.pitch()) - 1)) as usize;
-        let bit = (row << header.pitch()) + col;
-        let byte = bit >> 3;
-        let shift = bit & 7;
-
-        1 == (unsafe {
-            ptr::read(self.bitset_start().offset(byte as isize))
-        } >> shift) & 1
+        let (chunk, bit) = self.chunk(a, b);
+        chunk.is_populated(bit)
     }
 
     /// Return whether `a` is an in-bounds cell row for this composite.
+    ///
+    /// The valid range includes the blank row at the beginning but excludes
+    /// padding rows at the end.
     #[inline(always)]
     pub fn is_in_a_bound(&self, a: i16) -> bool {
         let header = self.header();
-        let row = (a - header.row_offset()) as usize;
-        row < 1 << header.rows()
+        let row = (a - header.row_offset()) as u32;
+        row <= header.row_count() as u32
     }
 
-    /// Return whether `(a,b)` is an in-bounds cell address for this composite.
+    /// Return whether `b` is an in-bounds cell column for this composite
+    /// within the given chunk.
     #[inline(always)]
-    pub fn is_in_bounds(&self, a: i16, b: i16) -> bool {
-        let header = self.header();
-        let row = (a as i32 - header.row_offset() as i32) as usize;
-        if row >= (1 << header.rows()) { return false; }
-
-        let col_offset = unsafe { self.col_offset_unchecked(row) };
-
-        let col = (b as i32 - col_offset as i32) as usize;
-        col < (1 << header.pitch())
+    pub fn is_in_b_bound(&self, chunk: Chunk, b: i16) -> bool {
+        let off = b as i32 - chunk.col_base() as i32;
+        (off as u32) < CHUNK_WIDTH << self.header().pitch()
     }
 
-    /// Returns an iterator over the logical row indices in this composite.
+    /// Returns an iterator over the logical row indices in this composite,
+    /// excluding the zeroth row which is always empty.
     pub fn rows(&self) -> impl Iterator<Item = i16> {
         let row_offset = self.header().row_offset() as i32;
-        (0..(1i32 << self.header().rows())).map(
+        (1..self.header().row_count() as i32 + 1).map(
             move |row| (row + row_offset) as i16)
     }
 
-    /// Returns the logical index of the first column in the given logical row.
-    pub fn col_offset(&self, row: i16) -> i16 {
-        let phys_row = (row as i32 - self.header().row_offset() as i32)
-            as usize;
-        assert!(phys_row <= 1 << self.header().rows());
-        unsafe {
-            self.col_offset_unchecked(phys_row)
-        }
+    /// Returns an iterator over the logical indices of populated columns in
+    /// the given logical row.
+    pub fn cells_in_row<'a>(&'a self, row: i16)
+                            -> impl 'a + Iterator<Item = i16> {
+        let (bits, base) = RowBitIter::start_of_row(self, row);
+        let end = (base as i16) + (CHUNK_WIDTH << self.header().pitch()) as i16;
+
+        bits.scan_through(base as i16, end)
     }
 
-    /// Returns an iterator over the logical indices of columns in the given
-    /// logical row.
-    pub fn cols_in_row(&self, row: i16) -> impl Iterator<Item = i16> {
-        let col_offset = self.col_offset(row) as i32;
-        (0..(1i32 << self.header().pitch())).map(
-            move |col| ((col + col_offset) as i16))
+    fn cells_in_row_rbi(&self, row: i16, first_col: i16, last_col: i16)
+                        -> (RowBitIter, i16, i16) {
+        let (mut bits, base) = RowBitIter::in_row(self, row);
+        let actual_start = max(base as i32, first_col as i32);
+        let actual_end = min(
+            (base as i32) + ((CHUNK_WIDTH as i32) << self.header().pitch()),
+            last_col as i32);
+        let actual_len = actual_end - actual_start;
+
+        bits.reset(self.col_index(actual_start as i16));
+        (bits, actual_start as i16, (actual_start + actual_len) as i16)
     }
 
-    /// Returns an iterator over all 2D cell indices considered "in-bounds" in
-    /// this composite.
-    pub fn indices<'a>(&'a self) -> impl 'a + Iterator<Item = (i16,i16)> {
-        self.rows().flat_map(
-            move |row| self.cols_in_row(row).map(move |col| (row, col)))
+    /// Returns an iterator over the logical indices of populated columns in
+    /// the given logical row, where the column indices are between `first_col`
+    /// (inclusive) and `last_col` (exclusive).
+    pub fn cells_in_subrow<'a>(&'a self, row: i16,
+                               first_col: i16, last_col: i16)
+                               -> impl 'a + Iterator<Item = i16> {
+        let (bits, start, end) = self.cells_in_row_rbi(
+            row, first_col, last_col);
+        bits.scan_through(start, end)
+    }
+
+    /// Like `cells_in_subrow`, but return an iterator which produces columns 4
+    /// at a time.
+    ///
+    /// Each quadruplet is accompanied by a mask of which columns actually have
+    /// cells.
+    ///
+    /// This is "approximate" in that it will generally overshoot `last_col`,
+    /// potentially including cells beyond it or even out of bounds.
+    pub fn cells4_in_subrow_approx<'a>
+        (&'a self, row: i16, first_col: i16, last_col: i16)
+         -> impl 'a + Iterator<Item = (i32x4, u32)>
+    {
+        let (bits, start, end) = self.cells_in_row_rbi(
+            row, first_col, last_col);
+        RowNybbleIter::wrap(bits).scan_through(start, end)
     }
 
     /// Returns an iterator over the logical indices of cells which are
     /// populated in this composite.
     pub fn cells<'a>(&'a self) -> impl 'a + Iterator<Item = (i16,i16)> {
-        self.indices().filter(move |&(row, col)| self.is_populated(row, col))
-    }
-
-    #[inline(always)]
-    unsafe fn col_offset_unchecked(&self, row: usize) -> i16 {
-        let array = self.col_offset_array_start();
-        if self.use_16bit_col_offset() {
-            ptr::read((array as *const i16).offset(row as isize))
-        } else {
-            (ptr::read((array as *const i8).offset(row as isize))) as i16
-        }
+        self.rows().flat_map(
+            move |row| self.cells_in_row(row).map(move |col| (row, col)))
     }
 
     /// Test for a collision with a point particle.
@@ -265,18 +707,19 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     /// If there is a collision, returns the index of the cell affected.
     #[inline(always)]
     pub fn test_point_collision(&self, relative_pos: Vhs) -> Option<(i16,i16)> {
+        // TODO Can maybe be faster via first approximation
+
         let grid_relative_pos = relative_pos - self.header().offset();
         let (ia, ib) = grid_relative_pos.to_index();
 
-        if self.is_in_a_bound(ia as i16) &&
-            self.is_populated(ia as i16, ib as i16) &&
-            self.is_in_bounds(ia as i16, ib as i16) &&
-            (ia as i16 as i32) == ia && (ib as i16 as i32) == ib
-        {
-            Some((ia as i16, ib as i16))
-        } else {
-            None
-        }
+        if !self.is_in_a_bound(ia as i16) { return None; }
+
+        let (chunk, bit) = self.chunk(ia as i16, ib as i16);
+        if !self.is_in_b_bound(chunk, ib as i16) ||
+            !chunk.is_populated(bit)
+        { return None; }
+
+        Some((ia as i16, ib as i16))
     }
 
     /// Computes an upper bound on the collision span of this object (as per
@@ -297,8 +740,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Search for the cell which is the farthest from the centre of
         // gravity. It could be in any row, so we must scan all the rows.
         for row in self.rows() {
-            let mut col_iter = self.cols_in_row(row).filter(
-                |&col| self.is_populated(row, col));
+            let mut col_iter = self.cells_in_row(row);
             if let Some(first_col) = col_iter.next() {
                 let last_col = col_iter.last().unwrap_or(first_col);
 
@@ -396,58 +838,133 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // Determine the first and last rows to scan, and start tracking the
         // base coordinate for that row.
         let first_row = max(that_bounds_self_grid.extract(0),
-                            self.header().row_offset() as i32);
+                            // First row is always empty
+                            self.header().row_offset() as i32 + 1);
         let last_row = min(that_bounds_self_grid.extract(2),
-                           (self.header().row_offset() as i32) +
-                           (1 << self.header().rows()) - 1);
+                           self.header().row_offset() as i32 +
+                           self.header().row_count() as i32);
         let mut row_zero: Vhs = self_origin_that_grid +
             grid_displacement.fst() * Vhs(first_row, first_row);
 
         // Scan the columns of each row for overlapping cells
-        let pitch = 1 << self.header().pitch();
         for row in first_row..last_row + 1 {
-            let col_offset = unsafe {
-                self.col_offset_unchecked(
-                    (row - self.header().row_offset() as i32) as usize
-                )
-            };
-
-            let first_col = max(that_bounds_self_grid.extract(1),
-                                col_offset as i32);
-            let last_col = min(that_bounds_self_grid.extract(3),
-                               col_offset as i32 + pitch - 1);
-            let mut coord: Vhs = row_zero + grid_displacement.snd() *
-                Vhs(first_col, first_col);
-            for col in first_col..last_col + 1 {
-                if self.is_populated(row as i16, col as i16) {
-                    let (rhs_a, rhs_b) = coord.to_grid_overlap();
-                    macro_rules! check {
-                        ($off:expr) => {
-                            let a = rhs_a.extract($off);
-                            let b = rhs_b.extract($off);
-                            if that.is_in_bounds(a as i16, b as i16) &&
-                                that.is_populated(a as i16, b as i16) &&
-                                (a as i16 as i32) == a &&
-                                (b as i16 as i32) == b
-                            {
-                                if dst.push([(row as i16, col as i16),
-                                             (a as i16, b as i16)])
-                                    .is_some()
-                                {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    check!(0);
-                    check!(1);
-                    check!(2);
-                    check!(3);
-                }
-                coord = coord + grid_displacement.snd();
-            }
-
+            self.test_composite_collision_row(
+                dst, that, grid_displacement,
+                row_zero, row as i16,
+                that_bounds_self_grid.extract(1) as i16,
+                that_bounds_self_grid.extract(3) as i16);
             row_zero = row_zero + grid_displacement.fst();
+        }
+    }
+
+    #[inline(always)]
+    fn test_composite_collision_row<R : Borrow<[i32x4]>>(
+        &self, dst: &mut CollisionSet,
+        that: &CompositeObject<R>,
+        grid_displacement: Vhl,
+        row_zero: Vhs, row: i16,
+        first_col: i16, last_col: i16
+    ) {
+        for (cols, mask) in self.cells4_in_subrow_approx(
+            row, first_col, last_col)
+        {
+            self.test_composite_collision_col4(
+                dst, that, grid_displacement, row_zero, row, cols,
+                last_col, mask);
+        }
+    }
+
+    #[inline(always)]
+    fn test_composite_collision_col4<R : Borrow<[i32x4]>>(
+        &self, dst: &mut CollisionSet,
+        that: &CompositeObject<R>,
+        grid_displacement: Vhl,
+        row_zero: Vhs,
+        row: i16, col: i32x4, last_col: i16,
+        mask: u32
+    ) {
+        let nominal_a = i32x4::splat(row_zero.a()) +
+            i32x4::splat(grid_displacement.snd().a()) * col;
+        let nominal_b = i32x4::splat(row_zero.b()) +
+            i32x4::splat(grid_displacement.snd().b()) * col;
+        let approx_a: i32x4 = nominal_a >> CELL_HEX_SHIFT;
+        let approx_b: i32x4 = nominal_b >> CELL_HEX_SHIFT;
+
+        let a_in_bounds = approx_a.nsw_between(
+            that.header().row_offset() as i32,
+            that.header().row_offset() as i32 +
+                1 + that.header().row_count() as i32);
+
+        let row_indices = that.row_chunk_index4(approx_a);
+        let col_coords = that.col_index4(approx_b);
+        let chunk_indices = row_indices + (col_coords >> 16);
+        let (chunk0, chunk1, chunk2, chunk3) = unsafe {(
+            // AVX512 could do this in one instruction with gather, but any
+            // system with AVX512 is so far above the needed spec that there's
+            // no reason to bother with it.
+            *that.chunks().get_unchecked(chunk_indices.extract(0) as usize),
+            *that.chunks().get_unchecked(chunk_indices.extract(1) as usize),
+            *that.chunks().get_unchecked(chunk_indices.extract(2) as usize),
+            *that.chunks().get_unchecked(chunk_indices.extract(3) as usize)
+        )};
+
+        let to_check = mask & a_in_bounds.movemask();
+        macro_rules! check_lane {
+            ($lane:expr, $chunk:expr) => {{
+                if 0 != to_check & (1 << $lane) &&
+                    // The column iterator may go out of bounds, so skip if
+                    // that happened.
+                    col.extract($lane) < last_col as i32
+                {
+                    let neighbourhood = $chunk.neighbourhood(
+                        col_coords.extract($lane) as u16);
+                    let b = approx_b.extract($lane);
+                    if neighbourhood.any() &&
+                        that.is_in_b_bound($chunk, b as i16) &&
+                        b as i16 as i32 == b
+                    {
+                        let hits = neighbourhood.hits(
+                            Vhs(nominal_a.extract($lane),
+                                nominal_b.extract($lane)));
+
+                        check!(hits, $lane, 0, 0, c00);
+                        check!(hits, $lane, 0, 1, c01);
+                        check!(hits, $lane, 1, 0, c10);
+                        check!(hits, $lane, 1, 1, c11);
+                    }
+                }
+            }}
+        }
+        macro_rules! check {
+            ($hits:expr, $lane:expr, $ao:expr, $bo:expr, $meth:ident) => {
+                // No need for bounds checking due to the row and
+                // column padding.
+                if $hits.$meth() {
+                    if dst.push([(row as i16, col.extract($lane) as i16),
+                                 (approx_a.extract($lane) as i16 + $ao,
+                                  approx_b.extract($lane) as i16 + $bo)])
+                        .is_some()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        check_lane!(0, chunk0);
+        check_lane!(1, chunk1);
+        check_lane!(2, chunk2);
+        check_lane!(3, chunk3);
+    }
+}
+
+impl<T : BorrowMut<[i32x4]>> CompositeObject<T> {
+    #[inline(always)]
+    fn chunks_mut(&mut self) -> &mut [Chunk] {
+        let s = self.0.borrow_mut();
+        unsafe {
+            slice::from_raw_parts_mut(
+                s.as_mut_ptr().offset(1) as *mut Chunk,
+                (s.len() - 1) * 2)
         }
     }
 }
@@ -467,102 +984,99 @@ impl<A : Array<Item = i32x4>> CompositeObject<SmallVec<A>> {
     pub unsafe fn build<T : Iterator<Item = (i16,i16)>, F : Fn () -> T>
         (mut base: CompositeHeader, cells: F) -> Self
     {
+        // Determine the logical index of the zeroth row. Note that we insert a
+        // blank row above.
         let min_row = cells().next().expect(
-            "Attempted to make composite with no cells").0;
-        let mut max_row = min_row;
-        let mut prev = (i16::MIN, i16::MIN);
-        let mut row_start = i16::MIN;
-        let mut max_row_width = 0;
-        let mut max_abs_b = 0;
+            "Attempted to make composite with no cells").0 - 1;
 
+        // Make a first pass through the cells to determine the beginning and
+        // end logical indices of each row.
+        let mut row_spans = SmallVec::<[(i16,i16);64]>::new();
+        let mut prev = (i16::MIN, i16::MIN);
         for (a, b) in cells() {
             debug_assert!((a, b) > prev);
+            prev = (a, b);
 
-            if a != prev.0 {
-                max_row_width = max(max_row_width, 1 + prev.1 - row_start);
-                row_start = b;
+            // Since min_row is offset by 1, this also causes the blank top row
+            // to be added implicitly
+            let row_ix = (a - min_row) as usize;
+            // Add any empty rows as well as this row if needed.
+            while row_spans.len() <= row_ix {
+                // Minus one since we need an empty column at the start
+                row_spans.push((b-1, b-1));
             }
 
-            max_abs_b = max(max_abs_b, b.abs());
-            prev = (a, b);
-            max_row = a;
+            // Update the maximum column for this row
+            row_spans[row_ix].1 = b;
         }
-        max_row_width = max(max_row_width, 1 + prev.1 - row_start);
+
+        let num_rows = row_spans.len();
+
+        // Add another empty row at the bottom that's the same as the current
+        // last row. This one doesn't get included in the output, but just
+        // allows doing things with `windows()`.
+        let last_row_span = row_spans[num_rows-1];
+        row_spans.push(last_row_span);
+
+        let max_row_span = row_spans.windows(2)
+            // Each row needs space for both itself and the cells on the next
+            // row.
+            .map(|s| 1 + max(s[0].1, s[1].1) - min(s[0].0, s[1].0))
+            .max()
+            .expect("Empty row_spans");
 
         fn log2_up(v: i16) -> u8 {
             (16 - (v - 1).leading_zeros()) as u8
         }
 
-        let pitch = max(log2_up(max_row_width),
-                        if max_abs_b <= 127 { 0 } else { 7 });
-        let rows = log2_up(1 + max_row - min_row);
-        let column_offset_fmt = if pitch >= 7 { 1 } else { 0 };
-        base.set_row_offset(min_row);
+        // Set up an empty composite
+        let rrows = log2_up(num_rows as i16);
+        base.set_row_offset(min_row as i16);
+        base.set_rows(rrows);
+        debug_assert!(num_rows <= 65536);
+        base.set_row_count((num_rows - 1) as u16);
+        let pitch = log2_up(
+            ((max_row_span as u32 + CHUNK_WIDTH - 1) /
+             CHUNK_WIDTH) as i16);
         base.set_pitch(pitch);
-        base.set_rows(rows);
 
-        let mut dst = SmallVec::<A>::new();
-        let data_bytes = ((1 << pitch << rows) + 15) / 16 * 2 +
-            (1 << rows << column_offset_fmt);
-        let capacity = 1 + (data_bytes + 15) / 16;
-        dst.reserve(capacity);
-        dst.push(base.0);
-        while dst.len() < capacity {
-            dst.push(i32x4::splat(0));
+        let mut dst = CompositeObject({
+            let mut data = SmallVec::new();
+            data.push(base.0);
+            for _ in 0..(1 << rrows-1 << pitch) {
+                data.push(i32x4::splat(0));
+            }
+            data
+        });
+
+        // Set all the col_bases for populated rows. We can leave the bases for
+        // completely blank rows as zero.
+        for (row_ix, spans) in row_spans.windows(2).enumerate() {
+            let logical_row = row_ix as i16 + min_row;
+            let row_start = dst.row_chunk_index(logical_row);
+            for ix in row_start..row_start + (1 << pitch) {
+                dst.chunks_mut()[ix].set_col_base(
+                    min(spans[0].0, spans[1].0));
+            }
         }
 
-        let bitset_base = &mut dst[1] as *mut i32x4 as *mut u8;
-        let mut column_off = (/*unsafe*/ {
-            bitset_base.offset(((1 << pitch << rows) + 15) / 16 * 2)
-        }) as *mut ();
-
-        prev = (min_row - 1, i16::MIN);
+        // Finally, populate the bitset
         for (a, b) in cells() {
-            debug_assert!((a, b) > prev);
-            // Need a loop rather than `if` to deal with gaps. The column
-            // offsets we write for gaps are arbitrary so just use whatever is
-            // convenient.
-            while prev.0 < a {
-                if 0 == column_offset_fmt {
-                    /*unsafe*/ {
-                        ptr::write(column_off as *mut i8, b as i8);
-                        column_off = (column_off as *mut i8)
-                            .offset(1) as *mut ();
-                    }
-                } else {
-                    /*unsafe*/ {
-                        ptr::write(column_off as *mut i16, b);
-                        column_off = (column_off as *mut i16)
-                            .offset(1) as *mut ();
-                    }
-                }
-                prev.0 += 1;
+            macro_rules! poke {
+                ($ao:expr, $bo:expr, $meth:ident) => {{
+                    let row_start = dst.row_chunk_index(a - $ao);
+                    let col_ix = dst.col_index(b - $bo);
+                    dst.chunks_mut()[row_start + col_ix.chunk as usize]
+                        .$meth(col_ix.bit + 2*$bo);
+                }}
             }
-            prev = (a, b);
-
-            let bit_row = (a & ((1 << rows) - 1)) as usize;
-            let bit_col = (b & ((1 << pitch) - 1)) as usize;
-            let bit = (bit_row << pitch) + bit_col;
-            let byte = bit >> 3;
-            let shift = bit & 7;
-
-            /*unsafe*/ {
-                let bptr = bitset_base.offset(byte as isize);
-                ptr::write(bptr, (1 << shift) | ptr::read(bptr));
-            }
+            poke!(0, 0, set_col0);
+            poke!(0, 1, set_col0);
+            poke!(1, 0, set_col1);
+            poke!(1, 1, set_col1);
         }
 
-        // Since the rows count is rounded up, there may be rows whose columns
-        // offsets weren't set. That's fine; with no cells, any value is fine,
-        // and we zero-initialised everything already.
-
-        debug_assert!((column_off as usize) <=
-                      &dst[dst.len() - 1] as *const i32x4 as usize + 16,
-                      "Wrote too many rows (got to {:?}, \
-                       allocation ends at {:?}+16", column_off,
-                      &dst[dst.len() - 1] as *const i32x4);
-
-        CompositeObject(dst)
+        dst
     }
 }
 
@@ -574,7 +1088,7 @@ impl<T : Borrow<[i32x4]>> fmt::Debug for CompositeObject<T> {
         s.field("header", &header);
 
         for row in self.rows() {
-            if self.cols_in_row(row).any(|col| self.is_populated(row, col)) {
+            if self.cells_in_row(row).next().is_some() {
                 s.field(&format!("row[{}]", row), &DebugRow(self, row));
             }
         }
@@ -588,10 +1102,8 @@ for DebugRow<&'a CompositeObject<T>> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let logical_row = self.1;
         let mut list = f.debug_list();
-        for col in self.0.cols_in_row(logical_row) {
-            if self.0.is_populated(logical_row, col) {
-                list.entry(&col);
-            }
+        for col in self.0.cells_in_row(logical_row) {
+            list.entry(&col);
         }
         list.finish()
     }
@@ -599,7 +1111,7 @@ for DebugRow<&'a CompositeObject<T>> {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
     use std::num::Wrapping;
     use test::{Bencher, black_box};
 
@@ -651,6 +1163,25 @@ mod test {
             }).boxed()
     }
 
+    #[test]
+    fn builds_correct_bitset_0neg8() {
+        static CELLS: &'static [(i16,i16)] = &[(0,-8)];
+        let object = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || CELLS.iter().map(|&v| v))
+        };
+
+        assert!(object.is_in_a_bound(0));
+        let (chunk, bit) = object.chunk(0, -8);
+        assert!(object.is_in_b_bound(chunk, -8));
+        assert!(chunk.is_populated(bit));
+
+        let mut it = object.cells();
+        assert_eq!(Some((0, -8)), it.next());
+        assert_eq!(None, it.next());
+    }
+
     proptest! {
         #[test]
         fn packed_header_preserves_all_fields(
@@ -658,12 +1189,13 @@ mod test {
             b_offset in proptest::num::i32::ANY,
             row_offset in proptest::num::i16::ANY,
             rows in proptest::num::u8::ANY,
+            row_count in proptest::num::u16::ANY,
             pitch in proptest::num::u8::ANY,
             mass in proptest::num::u16::ANY
         ) {
             let orig = UnpackedCompositeHeader {
                 a_offset, b_offset, row_offset,
-                rows, pitch, mass,
+                rows, row_count, pitch, mass,
             };
             assert_eq!(orig.pack().unpack(), orig);
         }
@@ -684,10 +1216,35 @@ mod test {
 
             // All cells are marked populated
             for &(a, b) in cells {
-                assert!(object.is_populated(a, b),
+                // TODO Also test neighbourhoods
+                assert!(object.is_in_a_bound(a),
+                        "Cell ({},{}) out of A bound (row_off = {})",
+                        a, b, object.header().row_offset());
+                let (chunk, bit) = object.chunk(a, b);
+                assert!(chunk.is_populated(bit),
                         "Cell ({},{}) not marked populated", a, b);
-                assert!(object.is_in_bounds(a, b),
-                        "Cell ({},{}) is out of bounds", a, b);
+                assert!(object.is_in_b_bound(chunk, b),
+                        "Cell ({},{}) is out of B bound \
+                         (col_base = {}, pitch = {})", a, b,
+                        chunk.col_base(), 1 << object.header().pitch());
+
+                // Check other neighbourhoods where this cell should be found.
+                macro_rules! check {
+                    ($ao:expr, $bo:expr, $meth:ident) => {
+                        if object.is_in_a_bound(a - $ao) {
+                            let (chunk, bit) = object.chunk(a - $ao, b - $bo);
+                            if object.is_in_b_bound(chunk, b - $bo) {
+                                assert!(chunk.neighbourhood(bit).$meth(),
+                                        "Cell ({},{}) not marked present in \
+                                         neighbourhood where it should be at \
+                                         <{},{}>", a, b, $ao, $bo);
+                            }
+                        }
+                    }
+                }
+                check!(0, 1, c01);
+                check!(1, 0, c10);
+                check!(1, 1, c11);
             }
 
             // Coordinates not covered by `cells` are not populated or are out
@@ -695,14 +1252,83 @@ mod test {
             for a in -128i16..128i16 {
                 for b in -128i16..128i16 {
                     if !cells.contains(&(a, b)) {
-                        let pop = object.is_populated(a, b);
-                        let in_bounds = object.is_in_bounds(a, b);
-                        assert!(!pop || !in_bounds,
+                        let (chunk, bit) = object.chunk(a, b);
+                        let in_a_bound = object.is_in_a_bound(a);
+                        let in_b_bound = object.is_in_b_bound(chunk, b);
+                        let pop = chunk.is_populated(bit);
+                        assert!(!pop || !in_a_bound || !in_b_bound,
                                 "Non-cell ({},{}) marked present; \
-                                 populated = {}, in_bounds = {}",
-                                a, b, pop, in_bounds);
+                                 populated = {}, \
+                                 in_a_bound = {}, in_b_bound = {}",
+                                a, b, pop, in_a_bound, in_b_bound);
                     }
                 }
+            }
+
+            // Iterators should return all the cells and no more
+            let iterated_cells: BTreeSet<(i16,i16)> = object.cells().collect();
+            let not_iterated = cells.difference(&iterated_cells)
+                .collect::<Vec<_>>();
+            let not_expected = iterated_cells.difference(cells)
+                .collect::<Vec<_>>();
+            assert!(not_iterated.is_empty(), "Failed to iterate cells {:?}",
+                    not_iterated);
+            assert!(not_expected.is_empty(), "Iterated NX cells {:?}",
+                    not_expected);
+        }
+
+        #[test]
+        fn simd_col_index_matches_scalar(
+            ref composite in arb_composite(),
+            cols in [(-4096i16..4096i16),
+                     (-4096i16..4096i16),
+                     (-4096i16..4096i16),
+                     (-4096i16..4096i16)]
+        ) {
+            let composite = &composite.data;
+
+            let res = composite.col_index4(
+                i32x4::new(cols[0] as i32,
+                           cols[1] as i32,
+                           cols[2] as i32,
+                           cols[3] as i32));
+            for i in 0..4 {
+                let expected = composite.col_index(cols[i]);
+                let actual = ChunkRowCoord {
+                    chunk: (res.extract(i as u32) >> 16) as u16,
+                    bit: (res.extract(i as u32) & 0xFFFF) as u16,
+                };
+                assert_eq!(expected, actual);
+            }
+        }
+
+        #[test]
+        fn nybble_iter_same_as_bit_iterator(
+            ref c in arb_composite()
+        ) {
+            for row in c.data.rows() {
+                let expected = c.data.cells_in_row(row)
+                    .collect::<BTreeSet<_>>();
+                let min = expected.iter().next().cloned().unwrap_or(0);
+                let max = expected.iter().next_back().cloned().unwrap_or(min);
+
+                let mut expected_sloppy = expected.clone();
+                expected_sloppy.extend((1..4).map(|v| v+max));
+
+                let actual = c.data.cells4_in_subrow_approx(row, min, max+1)
+                    .flat_map(|(cols, mask)| (0..4)
+                              .filter(move |&lane| 0 != mask & (1 << lane))
+                              .map(move |lane| cols.extract(lane) as i16))
+                    .collect::<BTreeSet<_>>();
+
+                let not_iterated = expected.difference(&actual)
+                    .collect::<Vec<_>>();
+                assert!(not_iterated.is_empty(),
+                        "Failed to iterate cells {:?}", not_iterated);
+                let not_expected = actual.difference(&expected_sloppy)
+                    .collect::<Vec<_>>();
+                assert!(not_expected.is_empty(),
+                        "Iterated unexpected cells {:?}", not_expected);
             }
         }
     }
@@ -853,6 +1479,15 @@ mod test {
         });
     }
 
+    // Current timing on main test system based on this and more isolated
+    // benchmarks:
+    //
+    // 13ns per col4 call, called 4 times, 52ns
+    // 37ns per row call (24ns self), called 4 times, 96ns
+    // 48ns before entering the row loop
+    // Subtotal is 196ns, reasonably close to the actual time of 203ns
+    //
+    // Main focus for now then is to continue improving the iterator.
     #[bench]
     fn bench_cc_collision_4x4_noncolliding(b: &mut Bencher) {
         let composite = unsafe {
@@ -874,7 +1509,6 @@ mod test {
         }.pack();
         let xform = Affine2dH::rotate_hex(Wrapping(0));
 
-
         b.iter(|| {
             let mut result = CollisionSet::new();
             black_box(&composite).test_composite_collision(
@@ -882,5 +1516,122 @@ mod test {
                 black_box(obj_a), black_box(&composite), black_box(obj_b),
                 black_box(xform))
         });
+    }
+
+    #[bench]
+    fn bench_cc_collision_row(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision_row(
+                &mut result, black_box(&composite),
+                black_box(Affine2dH::rotate_hex(Wrapping(0)) *
+                          Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE)),
+                black_box(Vhs(65536, 65536)),
+                black_box(0), black_box(-3), black_box(2))
+        })
+    }
+
+    #[bench]
+    fn bench_cc_collision_col4(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        b.iter(|| {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision_col4(
+                &mut result, black_box(&composite),
+                black_box(Affine2dH::rotate_hex(Wrapping(0)) *
+                          Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE)),
+                black_box(Vhs(65536, 65536)),
+                black_box(0),
+                black_box(i32x4::new(0, 1, 2, 3)), black_box(3),
+                black_box(0xF));
+            // Force the function to be evaluated even when inlined. Awkwardly,
+            // we can't afford to actually return the `SmallVec` as it turns
+            // into a large `memcpy` that completely dominates the function
+            // under test.
+            result.len()
+        })
+    }
+
+    #[bench]
+    fn bench_composite_col_index(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+        b.iter(|| composite.col_index(black_box(42)));
+    }
+
+    #[bench]
+    fn bench_cells_in_subrow_init(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        b.iter(|| black_box(&composite).cells4_in_subrow_approx(
+            black_box(0), black_box(-4), black_box(4)));
+    }
+
+    #[bench]
+    fn bench_cells_in_subrow_step(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        let it = composite.cells4_in_subrow_approx(0, -4, 4);
+
+        // The iterator is actually safely cloneable, but closures don't get
+        // OBITS yet, so we have to do this unsafely.
+        #[inline]
+        fn clone_unsafely<T>(t: &T) -> T {
+            unsafe { ::std::ptr::read(t as *const T) }
+        }
+
+        b.iter(|| black_box(clone_unsafely(&it)).next());
+    }
+
+    #[test]
+    fn uiaeo() {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+        // Artificially inflated span will cause all cells to be checked even
+        // though none overlap.
+        let obj_a = UnpackedCommonObject {
+            a: -5 * CELL_L2_VERTEX, b: -5 * CELL_L2_VERTEX,
+            rounded_span: 255,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let obj_b = UnpackedCommonObject {
+            a: 5 * CELL_L2_VERTEX, b: 5 * CELL_L2_VERTEX,
+            rounded_span: 255,
+            .. UnpackedCommonObject::default()
+        }.pack();
+        let xform = Affine2dH::rotate_hex(Wrapping(0));
+
+        for _ in 0..1000000 {
+            let mut result = CollisionSet::new();
+            black_box(&composite).test_composite_collision(
+                &mut result,
+                black_box(obj_a), black_box(&composite), black_box(obj_b),
+                black_box(xform))
+        }
     }
 }

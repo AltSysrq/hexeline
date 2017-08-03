@@ -39,6 +39,14 @@ pub trait SimdExt {
     fn any_sign_bit(self) -> bool;
     /// Compute the absolute value of each lane in this value.
     fn abs(self) -> Self;
+    /// Return a vector with the sign bit set for each lane with falls within
+    /// the given half-open range.
+    ///
+    /// The other bits in the result have no particular value. It is intended
+    /// to either be sign-extended into a mask or passed to `movemask()`.
+    ///
+    /// Addition and subtraction on the inputs are assumed to not overflow.
+    fn nsw_between(self, lo: Self::Lane, hi: Self::Lane) -> Self;
 
     /// Return the sum of the first two lanes.
     fn hsum_2(self) -> Self::Lane;
@@ -129,6 +137,13 @@ impl SimdExt for i32x4 {
     #[inline(always)]
     fn abs(self) -> i32x4 {
         i32x4_abs(self)
+    }
+
+    #[inline(always)]
+    fn nsw_between(self, lo: i32, hi: i32) -> i32x4 {
+        let cmp_lo = i32x4::splat(lo-1) - self;
+        let cmp_hi = self - i32x4::splat(hi);
+        cmp_lo & cmp_hi
     }
 
     #[inline(always)]
@@ -384,6 +399,16 @@ mod test {
         assert_eq!(42, v.extract(1));
         assert_eq!(1, v.extract(2));
         assert_eq!(0x7FFFFFFF, v.extract(3));
+    }
+
+    #[test]
+    fn test_i32x4_nsw_between() {
+        assert_eq!(0xF, i32x4::splat(0).nsw_between(-1, 1).movemask());
+        assert_eq!(0xF, i32x4::splat(0).nsw_between(0, 1).movemask());
+        assert_eq!(0xF, i32x4::splat(-1).nsw_between(-1, 1).movemask());
+        assert_eq!(0x0, i32x4::splat(-1).nsw_between(0, 1).movemask());
+        assert_eq!(0x0, i32x4::splat(1).nsw_between(-1, 1).movemask());
+        assert_eq!(0x0, i32x4::splat(2).nsw_between(-1, 1).movemask());
     }
 
     #[test]
