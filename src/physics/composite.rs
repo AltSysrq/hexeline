@@ -1588,6 +1588,38 @@ mod test {
         b.iter(|| composite.col_index(black_box(42)));
     }
 
+    #[bench]
+    fn bench_cells_in_subrow_init(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        b.iter(|| black_box(&composite).cells4_in_subrow_approx(
+            black_box(0), black_box(-4), black_box(4)));
+    }
+
+    #[bench]
+    fn bench_cells_in_subrow_step(b: &mut Bencher) {
+        let composite = unsafe {
+            CompositeObject::<SmallVec<[i32x4;32]>>::build(
+                UnpackedCompositeHeader::default().pack(),
+                || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
+        };
+
+        let it = composite.cells4_in_subrow_approx(0, -4, 4);
+
+        // The iterator is actually safely cloneable, but closures don't get
+        // OBITS yet, so we have to do this unsafely.
+        #[inline]
+        fn clone_unsafely<T>(t: &T) -> T {
+            unsafe { ::std::ptr::read(t as *const T) }
+        }
+
+        b.iter(|| black_box(clone_unsafely(&it)).next());
+    }
+
     #[test]
     fn uiaeo() {
         let composite = unsafe {
