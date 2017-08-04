@@ -387,25 +387,27 @@ impl<'a> RowNybbleIter<'a> {
     fn wrap(inner: RowBitIter<'a>) -> Self {
         RowNybbleIter { inner, next_off: 0 }
     }
-
-    /// Adapt this iterator to return column coordinates and bitmasks.
-    ///
-    /// Zero items are filtered out.
-    ///
-    /// `end` is only approximate; the iterator may iterate slightly beyond it.
-    fn scan_through(self, base: i16, end: i16)
-                    -> impl 'a + Iterator<Item = (i32x4,u32)> {
-        self.scan(base,
-                  |accum, (step, mask)| {
-                      *accum += step as i16;
-                      Some((*accum, mask))
-                  })
-            .take_while(move |&(ix, _)| ix < end)
-            .filter(|&(_, mask)| 0 != mask & 0xF)
-            .map(|(base, mask)| (i32x4::splat(base as i32) +
-                                 i32x4::new(0, 2, 1, 3), mask))
-    }
 }
+
+/// Adapt a 4-at-a-time iterator to return column coordinates and bitmasks.
+///
+/// Zero items are filtered out.
+///
+/// `end` is only approximate; the iterator may iterate slightly beyond it.
+fn scan_through4<IT : Iterator<Item = (u32,u32)>>
+    (it: IT, base: i16, end: i16)
+     -> impl Iterator<Item = (i32x4,u32)>
+{
+    it.scan(base, |accum, (step, mask)| {
+        *accum += step as i16;
+        Some((*accum, mask))
+    })
+        .take_while(move |&(ix, _)| ix < end)
+        .filter(|&(_, mask)| 0 != mask & 0xF)
+        .map(|(base, mask)| (i32x4::splat(base as i32) +
+                             i32x4::new(0, 2, 1, 3), mask))
+}
+
 
 impl<'a> Iterator for RowNybbleIter<'a> {
     type Item = (u32, u32);
@@ -449,6 +451,49 @@ impl<'a> Iterator for RowNybbleIter<'a> {
         }
 
         Some((cnt, mask))
+    }
+}
+
+/// Similar to `RowNybbleIter`, but only works for composites with a `pitch` of
+/// 0 (i.e., single-chunk-wide rows).
+///
+/// It may return false positives beyond the end of the iterator, and does not
+/// detect the end itself.
+#[derive(Clone, Copy, Debug)]
+struct SingleChunkNybbleIter {
+    current: u64,
+    next_advance: u32,
+}
+
+impl SingleChunkNybbleIter {
+    /// Create an iterator starting from the `start`th bit in `chunk`.
+    ///
+    /// `start` is a bit index as used elsewhere to address chunk bits.
+    fn in_row(chunk: Chunk, start: u16) -> Self {
+        Chunk::assert_valid_index(start);
+
+        let v = chunk.0 as u64 & 0x555555555555;
+        // Rotate the lower `2*CHUNK_WIDTH` bits so that bit 0 is the one that
+        // was originally at `start`.
+        let v = (v >> start) | (v << CHUNK_WIDTH*2 - start as u32);
+
+        SingleChunkNybbleIter { current: v, next_advance: 0 }
+    }
+}
+
+impl Iterator for SingleChunkNybbleIter {
+    type Item = (u32, u32);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<(u32, u32)> {
+        let n = self.current.trailing_zeros();
+        let head = self.current >> (n & 63);
+        let mask = (head | (head >> 3)) as u32;
+        self.current = head >> 8;
+        let advance = n/2 + self.next_advance;
+        self.next_advance = 4;
+
+        Some((advance, mask))
     }
 }
 
@@ -689,7 +734,26 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     {
         let (bits, start, end) = self.cells_in_row_rbi(
             row, first_col, last_col);
-        RowNybbleIter::wrap(bits).scan_through(start, end)
+        scan_through4(RowNybbleIter::wrap(bits), start, end)
+    }
+
+    /// Like `cells4_in_subrow_approx`, but panics if the pitch of this
+    /// composite is not 0.
+    pub fn sc_cells4_in_subrow_approx
+        (&self, row: i16, first_col: i16, last_col: i16)
+         -> impl Iterator<Item = (i32x4, u32)>
+    {
+        debug_assert!(0 == self.header().pitch());
+        let row_ix = self.row_chunk_index(row);
+        let chunk = unsafe {
+            *self.chunks().get_unchecked(row_ix)
+        };
+        let actual_start = max(chunk.col_base() + 1, first_col);
+        let actual_end = min(chunk.col_base() + CHUNK_WIDTH as i16, last_col);
+        let bit = self.col_index(actual_start).bit;
+
+        scan_through4(SingleChunkNybbleIter::in_row(chunk, bit),
+                      actual_start, actual_end)
     }
 
     /// Returns an iterator over the logical indices of cells which are
@@ -847,13 +911,25 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             grid_displacement.fst() * Vhs(first_row, first_row);
 
         // Scan the columns of each row for overlapping cells
-        for row in first_row..last_row + 1 {
-            self.test_composite_collision_row(
-                dst, that, grid_displacement,
-                row_zero, row as i16,
-                that_bounds_self_grid.extract(1) as i16,
-                that_bounds_self_grid.extract(3) as i16);
-            row_zero = row_zero + grid_displacement.fst();
+        // Special-case for pitch=0 composites since they are quite common
+        if 0 == self.header().pitch() {
+            for row in first_row..last_row + 1 {
+                self.test_composite_collision_row_sc(
+                    dst, that, grid_displacement,
+                    row_zero, row as i16,
+                    that_bounds_self_grid.extract(1) as i16,
+                    that_bounds_self_grid.extract(3) as i16);
+                row_zero = row_zero + grid_displacement.fst();
+            }
+        } else {
+            for row in first_row..last_row + 1 {
+                self.test_composite_collision_row(
+                    dst, that, grid_displacement,
+                    row_zero, row as i16,
+                    that_bounds_self_grid.extract(1) as i16,
+                    that_bounds_self_grid.extract(3) as i16);
+                row_zero = row_zero + grid_displacement.fst();
+            }
         }
     }
 
@@ -866,6 +942,23 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         first_col: i16, last_col: i16
     ) {
         for (cols, mask) in self.cells4_in_subrow_approx(
+            row, first_col, last_col)
+        {
+            self.test_composite_collision_col4(
+                dst, that, grid_displacement, row_zero, row, cols,
+                last_col, mask);
+        }
+    }
+
+    #[inline(always)]
+    fn test_composite_collision_row_sc<R : Borrow<[i32x4]>>(
+        &self, dst: &mut CollisionSet,
+        that: &CompositeObject<R>,
+        grid_displacement: Vhl,
+        row_zero: Vhs, row: i16,
+        first_col: i16, last_col: i16
+    ) {
+        for (cols, mask) in self.sc_cells4_in_subrow_approx(
             row, first_col, last_col)
         {
             self.test_composite_collision_col4(
@@ -1135,9 +1228,9 @@ mod test {
         }
     }
 
-    fn arb_composite() -> BoxedStrategy<ArbComposite> {
+    fn arb_composite(size: i16) -> BoxedStrategy<ArbComposite> {
         (proptest::collection::btree_set(
-            (-8i16..8i16, -8i16..8i16), 1..64),
+            (-size..size, -size..size), 1..64),
          -65536..65536, -65536..65536,
          proptest::num::i16::ANY,
          -4096..4096, -4096..4096).prop_map(
@@ -1216,7 +1309,6 @@ mod test {
 
             // All cells are marked populated
             for &(a, b) in cells {
-                // TODO Also test neighbourhoods
                 assert!(object.is_in_a_bound(a),
                         "Cell ({},{}) out of A bound (row_off = {})",
                         a, b, object.header().row_offset());
@@ -1279,7 +1371,7 @@ mod test {
 
         #[test]
         fn simd_col_index_matches_scalar(
-            ref composite in arb_composite(),
+            ref composite in arb_composite(40),
             cols in [(-4096i16..4096i16),
                      (-4096i16..4096i16),
                      (-4096i16..4096i16),
@@ -1304,7 +1396,7 @@ mod test {
 
         #[test]
         fn nybble_iter_same_as_bit_iterator(
-            ref c in arb_composite()
+            ref c in arb_composite(40)
         ) {
             for row in c.data.rows() {
                 let expected = c.data.cells_in_row(row)
@@ -1331,6 +1423,36 @@ mod test {
                         "Iterated unexpected cells {:?}", not_expected);
             }
         }
+
+        #[test]
+        fn single_chunk_iter_same_as_bit_iterator(
+            ref c in arb_composite(10)
+        ) {
+            for row in c.data.rows() {
+                let expected = c.data.cells_in_row(row)
+                    .collect::<BTreeSet<_>>();
+                let min = expected.iter().next().cloned().unwrap_or(0);
+                let max = expected.iter().next_back().cloned().unwrap_or(min);
+
+                let mut expected_sloppy = expected.clone();
+                expected_sloppy.extend((1..4).map(|v| v+max));
+
+                let actual = c.data.sc_cells4_in_subrow_approx(row, min, max+1)
+                    .flat_map(|(cols, mask)| (0..4)
+                              .filter(move |&lane| 0 != mask & (1 << lane))
+                              .map(move |lane| cols.extract(lane) as i16))
+                    .collect::<BTreeSet<_>>();
+
+                let not_iterated = expected.difference(&actual)
+                    .collect::<Vec<_>>();
+                assert!(not_iterated.is_empty(),
+                        "Failed to iterate cells {:?}", not_iterated);
+                let not_expected = actual.difference(&expected_sloppy)
+                    .collect::<Vec<_>>();
+                assert!(not_expected.is_empty(),
+                        "Iterated unexpected cells {:?}", not_expected);
+            }
+        }
     }
 
     proptest! {
@@ -1341,8 +1463,9 @@ mod test {
 
         #[test]
         fn cc_collisions_roughly_correct(
-            ref lhs in arb_composite(),
-            ref rhs in arb_composite()
+            // TODO Test fails for larger values
+            ref lhs in arb_composite(8),
+            ref rhs in arb_composite(8)
         ) {
             // For an exact solution, hexagons would collide somewhere between
             // 2*CELL_L2_EDGE and 2*CELL_L2_VERTEX. Increase the latter by
