@@ -703,10 +703,9 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let actual_end = min(
             (base as i32) + ((CHUNK_WIDTH as i32) << self.header().pitch()),
             last_col as i32);
-        let actual_len = actual_end - actual_start;
 
         bits.reset(self.col_index(actual_start as i16));
-        (bits, actual_start as i16, (actual_start + actual_len) as i16)
+        (bits, actual_start as i16, actual_end as i16)
     }
 
     /// Returns an iterator over the logical indices of populated columns in
@@ -727,21 +726,23 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     /// cells.
     ///
     /// This is "approximate" in that it will generally overshoot `last_col`,
-    /// potentially including cells beyond it or even out of bounds.
+    /// potentially including cells beyond it or even out of bounds. In
+    /// addition to the iterator, it returns the coordinate of the actual last
+    /// column (exclusive) within range.
     pub fn cells4_in_subrow_approx<'a>
         (&'a self, row: i16, first_col: i16, last_col: i16)
-         -> impl 'a + Iterator<Item = (i32x4, u32)>
+         -> (impl 'a + Iterator<Item = (i32x4, u32)>, i16)
     {
         let (bits, start, end) = self.cells_in_row_rbi(
             row, first_col, last_col);
-        scan_through4(RowNybbleIter::wrap(bits), start, end)
+        (scan_through4(RowNybbleIter::wrap(bits), start, end), end)
     }
 
     /// Like `cells4_in_subrow_approx`, but panics if the pitch of this
     /// composite is not 0.
     pub fn sc_cells4_in_subrow_approx
         (&self, row: i16, first_col: i16, last_col: i16)
-         -> impl Iterator<Item = (i32x4, u32)>
+         -> (impl Iterator<Item = (i32x4, u32)>, i16)
     {
         debug_assert!(0 == self.header().pitch());
         let row_ix = self.row_chunk_index(row);
@@ -752,8 +753,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let actual_end = min(chunk.col_base() + CHUNK_WIDTH as i16, last_col);
         let bit = self.col_index(actual_start).bit;
 
-        scan_through4(SingleChunkNybbleIter::in_row(chunk, bit),
-                      actual_start, actual_end)
+        (scan_through4(SingleChunkNybbleIter::in_row(chunk, bit),
+                       actual_start, actual_end), actual_end)
     }
 
     /// Returns an iterator over the logical indices of cells which are
@@ -941,12 +942,12 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         row_zero: Vhs, row: i16,
         first_col: i16, last_col: i16
     ) {
-        for (cols, mask) in self.cells4_in_subrow_approx(
-            row, first_col, last_col)
-        {
+        let (iter, end) = self.cells4_in_subrow_approx(
+            row, first_col, last_col);
+        for (cols, mask) in iter {
             self.test_composite_collision_col4(
                 dst, that, grid_displacement, row_zero, row, cols,
-                last_col, mask);
+                end, mask);
         }
     }
 
@@ -958,12 +959,12 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         row_zero: Vhs, row: i16,
         first_col: i16, last_col: i16
     ) {
-        for (cols, mask) in self.sc_cells4_in_subrow_approx(
-            row, first_col, last_col)
-        {
+        let (iter, end) = self.sc_cells4_in_subrow_approx(
+            row, first_col, last_col);
+        for (cols, mask) in iter {
             self.test_composite_collision_col4(
                 dst, that, grid_displacement, row_zero, row, cols,
-                last_col, mask);
+                end, mask);
         }
     }
 
@@ -1408,6 +1409,7 @@ mod test {
                 expected_sloppy.extend((1..4).map(|v| v+max));
 
                 let actual = c.data.cells4_in_subrow_approx(row, min, max+1)
+                    .0
                     .flat_map(|(cols, mask)| (0..4)
                               .filter(move |&lane| 0 != mask & (1 << lane))
                               .map(move |lane| cols.extract(lane) as i16))
@@ -1438,6 +1440,7 @@ mod test {
                 expected_sloppy.extend((1..4).map(|v| v+max));
 
                 let actual = c.data.sc_cells4_in_subrow_approx(row, min, max+1)
+                    .0
                     .flat_map(|(cols, mask)| (0..4)
                               .filter(move |&lane| 0 != mask & (1 << lane))
                               .map(move |lane| cols.extract(lane) as i16))
@@ -1463,9 +1466,8 @@ mod test {
 
         #[test]
         fn cc_collisions_roughly_correct(
-            // TODO Test fails for larger values
-            ref lhs in arb_composite(8),
-            ref rhs in arb_composite(8)
+            ref lhs in arb_composite(32),
+            ref rhs in arb_composite(32)
         ) {
             // For an exact solution, hexagons would collide somewhere between
             // 2*CELL_L2_EDGE and 2*CELL_L2_VERTEX. Increase the latter by
@@ -1716,7 +1718,7 @@ mod test {
                 || (-2..2).flat_map(|r| (-2..2).map(move |c| (r, c))))
         };
 
-        let it = composite.cells4_in_subrow_approx(0, -4, 4);
+        let it = composite.cells4_in_subrow_approx(0, -4, 4).0;
 
         // The iterator is actually safely cloneable, but closures don't get
         // OBITS yet, so we have to do this unsafely.
