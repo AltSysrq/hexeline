@@ -912,9 +912,9 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // later. The transform thus has `AFFINE_POINT+CELL_HEX_SHIFT`
         // significant bits; if we refine these constants later, reconsider
         // whether there's any risk of overflow here. Right now, this leaves
-        // 31-19=11 significant bits for cell indices, which is far more than
+        // 31-22=9 significant bits for cell indices, which is far more than
         // enough.
-        debug_assert!(19 == AFFINE_POINT + CELL_HEX_SHIFT as u32);
+        debug_assert!(22 == AFFINE_POINT + CELL_HEX_SHIFT as u32);
         // Let C stand for `CELL_HEX_SIZE`. The Vhl multiply described above
         // computes:
         //
