@@ -16,7 +16,7 @@ simd = "0.2.0"
 smallvec = "0.4.1"
 
 [dev-dependencies]
-proptest = "0.1.0"
+proptest = "0.1.1"
 
 [profile.test]
 opt-level = 1

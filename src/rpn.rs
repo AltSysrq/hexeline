@@ -45,12 +45,13 @@ impl fmt::Display for Value {
             Vo(v) => write!(f, "{:?}", v),
             Vh(v) => write!(f, "{:?}", v),
             Affine(matrix) =>
-                write!(f, "[{:12X} {:12X}\n\
-                          \x20   {:12X} {:12X}",
+                write!(f, "[{:5} {:5}\n\
+                     \x20   {:5} {:5} ] / {}",
                          matrix.repr().extract(0),
                          matrix.repr().extract(1),
                          matrix.repr().extract(2),
-                         matrix.repr().extract(3)),
+                         matrix.repr().extract(3),
+                       1 << AFFINE_POINT),
         }
     }
 }

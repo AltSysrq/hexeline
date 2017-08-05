@@ -46,7 +46,7 @@ use simdext::*;
 use intext::*;
 use physics::common_object::*;
 use physics::coords::*;
-use physics::xform::Affine2dH;
+use physics::xform::{AFFINE_POINT, Affine2dH};
 
 /// Unpacked form of `CompositeHeader`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -749,7 +749,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let chunk = unsafe {
             *self.chunks().get_unchecked(row_ix)
         };
-        let actual_start = max(chunk.col_base() + 1, first_col);
+        let actual_start = max(chunk.col_base(), first_col);
         let actual_end = min(chunk.col_base() + CHUNK_WIDTH as i16, last_col);
         let bit = self.col_index(actual_start).bit;
 
@@ -896,9 +896,38 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             .single() - that.header().offset();
 
         // Determine the displacement within `that`'s grid for moving (+1,0)
-        // and (0,+1) in our own cell grid
-        let grid_displacement = that_inverse_rot_xform * self_rot_xform *
-            Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE);
+        // and (0,+1) in our own cell grid.
+        //
+        // Nominally, this would be
+        // ```
+        // let grid_displacement = that_inverse_rot_xform * self_rot_xform *
+        //    Vhl(CELL_HEX_SIZE, 0, 0, CELL_HEX_SIZE);
+        // ```
+        //
+        // The transform itself stands.
+        let grid_displacement_xform = that_inverse_rot_xform * self_rot_xform;
+        //
+        // However, we don't want to premultiply like this due to precision
+        // loss; we'll keep the `AFFINE_POINT` factor in and shift it out
+        // later. The transform thus has `AFFINE_POINT+CELL_HEX_SHIFT`
+        // significant bits; if we refine these constants later, reconsider
+        // whether there's any risk of overflow here. Right now, this leaves
+        // 31-19=11 significant bits for cell indices, which is far more than
+        // enough.
+        debug_assert!(19 == AFFINE_POINT + CELL_HEX_SHIFT as u32);
+        // Let C stand for `CELL_HEX_SIZE`. The Vhl multiply described above
+        // computes:
+        //
+        // ```
+        // | a b | | C |   | Ca |           | a b |   | 0 |   | Cb |
+        // | c d | | 0 | = | Cc |    and    | c d | = | C | = | Cd |
+        // ```
+        //
+        // In other words, `Vhl(Ca, Cc, Cb, Cd)`. Since `C` is a power of two,
+        // we can do the multiply with a simple shift.
+        let grid_displacement = Vhl::from_repr(
+            grid_displacement_xform.repr().shuf(0, 2, 1, 3) <<
+                CELL_HEX_SHIFT);
 
         // Determine the first and last rows to scan, and start tracking the
         // base coordinate for that row.
@@ -908,7 +937,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let last_row = min(that_bounds_self_grid.extract(2),
                            self.header().row_offset() as i32 +
                            self.header().row_count() as i32);
-        let mut row_zero: Vhs = self_origin_that_grid +
+        let mut row_zero_off: Vhs =
             grid_displacement.fst() * Vhs(first_row, first_row);
 
         // Scan the columns of each row for overlapping cells
@@ -917,19 +946,21 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             for row in first_row..last_row + 1 {
                 self.test_composite_collision_row_sc(
                     dst, that, grid_displacement,
-                    row_zero, row as i16,
+                    (row_zero_off >> AFFINE_POINT) + self_origin_that_grid,
+                    row as i16,
                     that_bounds_self_grid.extract(1) as i16,
                     that_bounds_self_grid.extract(3) as i16);
-                row_zero = row_zero + grid_displacement.fst();
+                row_zero_off = row_zero_off + grid_displacement.fst();
             }
         } else {
             for row in first_row..last_row + 1 {
                 self.test_composite_collision_row(
                     dst, that, grid_displacement,
-                    row_zero, row as i16,
+                    (row_zero_off >> AFFINE_POINT) + self_origin_that_grid,
+                    row as i16,
                     that_bounds_self_grid.extract(1) as i16,
                     that_bounds_self_grid.extract(3) as i16);
-                row_zero = row_zero + grid_displacement.fst();
+                row_zero_off = row_zero_off + grid_displacement.fst();
             }
         }
     }
@@ -978,9 +1009,9 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         mask: u32
     ) {
         let nominal_a = i32x4::splat(row_zero.a()) +
-            i32x4::splat(grid_displacement.snd().a()) * col;
+            (i32x4::splat(grid_displacement.snd().a()) * col >> AFFINE_POINT);
         let nominal_b = i32x4::splat(row_zero.b()) +
-            i32x4::splat(grid_displacement.snd().b()) * col;
+            (i32x4::splat(grid_displacement.snd().b()) * col >> AFFINE_POINT);
         let approx_a: i32x4 = nominal_a >> CELL_HEX_SHIFT;
         let approx_b: i32x4 = nominal_b >> CELL_HEX_SHIFT;
 
@@ -1232,9 +1263,9 @@ mod test {
     fn arb_composite(size: i16) -> BoxedStrategy<ArbComposite> {
         (proptest::collection::btree_set(
             (-size..size, -size..size), 1..64),
-         -65536..65536, -65536..65536,
+         (-65536..65536), (-65536..65536),
          proptest::num::i16::ANY,
-         -4096..4096, -4096..4096).prop_map(
+         (-16384..16384), (-16384..16384)).prop_map(
             |(cells, a, b, theta, a_offset, b_offset)| {
                 let mut ret = ArbComposite {
                     common: UnpackedCommonObject {
@@ -1460,14 +1491,14 @@ mod test {
 
     proptest! {
         #![proptest_config(proptest::test_runner::Config {
-            cases: 65536,
+            cases: 6553600,
             .. proptest::test_runner::Config::default()
         })]
 
         #[test]
         fn cc_collisions_roughly_correct(
-            ref lhs in arb_composite(32),
-            ref rhs in arb_composite(32)
+            ref lhs in arb_composite(24),
+            ref rhs in arb_composite(24)
         ) {
             // For an exact solution, hexagons would collide somewhere between
             // 2*CELL_L2_EDGE and 2*CELL_L2_VERTEX. Increase the latter by
@@ -1511,7 +1542,9 @@ mod test {
             for item in &result {
                 assert!(aggressive_hits.contains(item),
                         "Detected {:?} as a collision, but they should not \
-                         have collided", item);
+                         have collided. lhs coord = {:?}, rhs coord = {:?}",
+                        item, lhs.cell_coord(item[0].0, item[0].1),
+                        rhs.cell_coord(item[1].0, item[1].1));
             }
             // Only check that all conservative items were found if the result
             // array was not saturated

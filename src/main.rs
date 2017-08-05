@@ -64,9 +64,27 @@ fn main() {
 
     env_logger::init().expect("Failed to initialise logging");
 
-    if Some("rpn") == env::args().nth(1).as_ref().map(|s| &**s) {
-        rpn::run_rpn();
-        return;
+    match env::args().nth(1).as_ref().map(|s| &**s) {
+        Some("rpn") => {
+            rpn::run_rpn();
+            return;
+        },
+        Some("circle") => {
+            let mut theta = ::std::num::Wrapping(0);
+            loop {
+                let expected = (theta.0 as f64 / 32768.0 * 3.14159).cos();
+                let actual =
+                    physics::xform::Affine2d::rotate(theta).repr().extract(0)
+                    as f64 / 1024.0;
+                println!("{:5}: {} vs {} (rel {})",
+                         theta.0, expected, actual, actual / expected);
+
+                theta += ::std::num::Wrapping(256);
+                if 0 == theta.0 { break; }
+            }
+            return;
+        },
+        _ => (),
     }
 
     let sdl_context = sdl2::init().unwrap_or_else(die);
@@ -203,7 +221,7 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
     use std::num::Wrapping;
 
     use physics::coords::*;
-    use physics::xform::Affine2d;
+    use physics::xform::Affine2dH;
 
     let mouse_pos = Vos(mouse_x * 65536 / w as i32, mouse_y * 65536 / w as i32)
         .to_vhr();
@@ -260,12 +278,18 @@ fn test_coords(tex: &mut graphic::Texture, w: u32, h: u32,
         }
     }
 
-    let radius = Vod(100, 0);
+    let radius = Vhd(100, 0);
     for theta in -32768i32..32768i32 {
-        let affine = Affine2d::rotate(Wrapping(theta as i16));
-        let xformed = affine * radius;
-        let px = xformed + Vod(128, 128);
+        let affine = Affine2dH::rotate_hex(Wrapping(theta as i16));
+        let xformed = (affine * radius).to_vod();
+        let px = (xformed + Vod(256, 256)) * Vod(2,2);
         data[(px.y()*(w as i32) + px.x()) as usize] |=
+            graphic::texture::rgba(255, 0, 0, 0);
+        data[(px.y()*(w as i32) + px.x() + 1) as usize] |=
+            graphic::texture::rgba(255, 0, 0, 0);
+        data[(px.y()*(w as i32) + px.x() + w as i32) as usize] |=
+            graphic::texture::rgba(255, 0, 0, 0);
+        data[(px.y()*(w as i32) + px.x() + w as i32 + 1) as usize] |=
             graphic::texture::rgba(255, 0, 0, 0);
     }
 
