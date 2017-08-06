@@ -409,10 +409,11 @@ fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
         fn simd_extract<T, U>(a: T, ix: u32) -> U;
     }
     #[repr(simd)]
+    #[derive(Clone, Copy)]
     struct I64x2(i64, i64);
     #[inline(always)]
     fn extract(v: I64x2, ix: u32) -> i64 {
-        simd_extract(v, ix)
+        unsafe { simd_extract(v, ix) }
     }
 
     let a = I64x2(a.extract(0) as i64, a.extract(2) as i64);
