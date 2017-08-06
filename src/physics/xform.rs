@@ -164,8 +164,10 @@ pub type Affine2dH = Affine2d<Hexagonal>;
 
 /// Position of the fixed point in an `Affine2d`.
 ///
-/// A value of 13 leaves 2 bits for the integer part.
-pub const AFFINE_POINT: u32 = 13;
+/// A value of 15 leaves 16 bits for the integer part. A lot of code assumes
+/// that `1i32 << AFFINE_POINT*2` does not overflow, so a decent amount of
+/// refactoring would be needed to increase this further.
+pub const AFFINE_POINT: u32 = 15;
 
 impl<S : Space> Default for Affine2d<S> {
     fn default() -> Affine2d<S> {
@@ -213,7 +215,7 @@ impl Affine2dO {
         // delay bit-shifting the point back to the correct place until after
         // the multiply.
         let first_term = theta * theta.abs() >> (28 - AFFINE_POINT);
-        let second_term = theta >> (13 - AFFINE_POINT);
+        let second_term = theta << (AFFINE_POINT - 13);
         let y = second_term - first_term;
         // Use the Py|y| + y - Py form so we don't need to load any other simd
         // constants. P=0.225
