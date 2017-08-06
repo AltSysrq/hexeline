@@ -1499,7 +1499,7 @@ mod test {
 
     proptest! {
         #![proptest_config(proptest::test_runner::Config {
-            cases: 6553600,
+            cases: 65536,
             .. proptest::test_runner::Config::default()
         })]
 
