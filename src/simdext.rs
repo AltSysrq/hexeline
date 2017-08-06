@@ -358,7 +358,7 @@ fn i32x4_abs(a: i32x4) -> i32x4 {
         i32x4::splat(0) - a, a)
 }
 
-#[cfg(target_feature = "sse2")]
+#[cfg(target_feature = "sse4.1")]
 #[inline(always)]
 fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
     use std::mem::transmute;
@@ -375,7 +375,31 @@ fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
     }
 }
 
-#[cfg(not(target_feature = "sse2"))]
+#[cfg(all(target_feature = "sse2", not(target_feature = "sse4.1")))]
+fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
+    use std::mem::transmute;
+    use simd::x86::sse2::u64x2;
+
+    extern "platform-intrinsic"{
+        fn x86_mm_mul_epu32(a: u32x4, b: u32x4) -> u64x2;
+    }
+
+    let u: i32x4 = unsafe {
+        transmute(x86_mm_mul_epu32(transmute(a), transmute(b)))
+    };
+
+    // The high words are incorrect since the 32-bit inputs were not sign
+    // extended. Add that factor in manually.
+    let a_sign: i32x4 = a >> 31;
+    let b_sign: i32x4 = b >> 31;
+    let b_add = b & a_sign;
+    let a_add = a & b_sign;
+    let hi_add = a_add + b_add;
+
+    u - i32x4::new(0, hi_add.extract(0), 0, hi_add.extract(2))
+}
+
+#[cfg(not(any(target_feature = "sse2", target_feature = "sse4.1")))]
 #[inline(always)]
 fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
     // Not all platforms have i64x2, but LLVM can emulate it when not.
