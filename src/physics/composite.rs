@@ -1510,11 +1510,11 @@ mod test {
         ) {
             // For an exact solution, hexagons would collide somewhere between
             // 2*CELL_L2_EDGE and 2*CELL_L2_VERTEX. Increase the latter by
-            // 13/10 to account for various precision loss. The former we
-            // reduce to half of what it would normally be due to the way the
+            // 12/10 to account for various precision loss. The former we
+            // reduce to 66% of what it would normally be due to the way the
             // collision test is approximated.
-            const AGGRESSIVE_DIST: u32 = CELL_L2_VERTEX as u32 * 2 * 13/10;
-            const CONSERVATIVE_DIST: u32 = CELL_L2_EDGE as u32;
+            const AGGRESSIVE_DIST: u32 = CELL_L2_VERTEX as u32 * 2 * 12/10;
+            const CONSERVATIVE_DIST: u32 = CELL_L2_EDGE as u32 * 2 * 66/100;
 
             let lhs_inv_rot = Affine2dH::rotate_hex(-lhs.common.theta());
 
