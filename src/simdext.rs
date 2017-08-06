@@ -382,15 +382,20 @@ fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
     // Unfortunately the simd crate doesn't expose this, so define by hand.
     extern "platform-intrinsic" {
         fn simd_mul<T>(a: T, b: T) -> T;
+        fn simd_extract<T, U>(a: T, ix: u32) -> U;
     }
     #[repr(simd)]
     struct I64x2(i64, i64);
+    #[inline(always)]
+    fn extract(v: I64x2, ix: u32) -> i64 {
+        simd_extract(v, ix)
+    }
 
     let a = I64x2(a.extract(0) as i64, a.extract(2) as i64);
     let b = I64x2(b.extract(0) as i64, b.extract(2) as i64);
     let r = unsafe { simd_mul(a, b) };
-    i32x4::new(r.0 as i32, (r.0 >> 32) as i32,
-               r.1 as i32, (r.1 >> 32) as i32)
+    i32x4::new(extract(r,0) as i32, (extract(r,0) >> 32) as i32,
+               extract(r,1) as i32, (extract(r,1) >> 32) as i32)
 }
 
 #[cfg(target_feature = "sse2")]
