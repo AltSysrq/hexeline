@@ -88,8 +88,9 @@ A lot of things are more convenient for us here since we use integers and
 fixed-point. We don't need to worry about wrapping θ manually, because it
 happens implicitly due to it being stored in a 16-bit integer. Since π = 32768,
 the first approximation is mostly bit-shifts, with the only multiply being
-θ|θ|. For the second approximation, we sacrifice a little bit of accuracy to
-set P=1/4, which replaces more multiplies by bit-shifts.
+θ|θ|. For the second approximation, we used to sacrifice a little bit of
+accuracy to set P=1/4, which replaces another multiply by a bit-shift. However,
+this reduces accuracy too much, so now we pay for the multiply.
 
 This approach to cos/sin really is fast, too. On my main test system, computing
 the full rotation matrix takes 3ns, whereas `f32::cos()` takes 7ns.
@@ -163,8 +164,10 @@ pub type Affine2dH = Affine2d<Hexagonal>;
 
 /// Position of the fixed point in an `Affine2d`.
 ///
-/// A value of 10 leaves 5 bits for the integer part.
-pub const AFFINE_POINT: u32 = 10;
+/// A value of 15 leaves 16 bits for the integer part. A lot of code assumes
+/// that `1i32 << AFFINE_POINT*2` does not overflow, so a decent amount of
+/// refactoring would be needed to increase this further.
+pub const AFFINE_POINT: u32 = 15;
 
 impl<S : Space> Default for Affine2d<S> {
     fn default() -> Affine2d<S> {
@@ -212,11 +215,11 @@ impl Affine2dO {
         // delay bit-shifting the point back to the correct place until after
         // the multiply.
         let first_term = theta * theta.abs() >> (28 - AFFINE_POINT);
-        let second_term = theta >> (13 - AFFINE_POINT);
+        let second_term = theta << (AFFINE_POINT - 13);
         let y = second_term - first_term;
         // Use the Py|y| + y - Py form so we don't need to load any other simd
-        // constants. P=1/4, so Py = y >> 2
-        let py = y >> 2;
+        // constants. P=0.225
+        let py = y * i32x4::splat(7373) >> 15;
         Affine2d(((py * y.abs()) >> AFFINE_POINT) + y - py, PhantomData)
     }
 

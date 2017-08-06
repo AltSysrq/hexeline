@@ -48,6 +48,9 @@ use physics::common_object::*;
 use physics::coords::*;
 use physics::xform::{AFFINE_POINT, Affine2dH};
 
+// Amount of precision to shift off of `AFFINE_POINT` in a couple places.
+const SUBAFFINE_SHIFT: u32 = 4;
+
 /// Unpacked form of `CompositeHeader`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct UnpackedCompositeHeader {
@@ -912,9 +915,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // later. The transform thus has `AFFINE_POINT+CELL_HEX_SHIFT`
         // significant bits; if we refine these constants later, reconsider
         // whether there's any risk of overflow here. Right now, this leaves
-        // 31-19=11 significant bits for cell indices, which is far more than
+        // 31-20=11 significant bits for cell indices, which is far more than
         // enough.
-        debug_assert!(19 == AFFINE_POINT + CELL_HEX_SHIFT as u32);
+        debug_assert!(20 == AFFINE_POINT + CELL_HEX_SHIFT as u32 -
+                      SUBAFFINE_SHIFT);
         // Let C stand for `CELL_HEX_SIZE`. The Vhl multiply described above
         // computes:
         //
@@ -927,7 +931,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // we can do the multiply with a simple shift.
         let grid_displacement = Vhl::from_repr(
             grid_displacement_xform.repr().shuf(0, 2, 1, 3) <<
-                CELL_HEX_SHIFT);
+                CELL_HEX_SHIFT - SUBAFFINE_SHIFT as u8);
 
         // Determine the first and last rows to scan, and start tracking the
         // base coordinate for that row.
@@ -946,7 +950,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             for row in first_row..last_row + 1 {
                 self.test_composite_collision_row_sc(
                     dst, that, grid_displacement,
-                    (row_zero_off >> AFFINE_POINT) + self_origin_that_grid,
+                    (row_zero_off >> AFFINE_POINT - SUBAFFINE_SHIFT) +
+                        self_origin_that_grid,
                     row as i16,
                     that_bounds_self_grid.extract(1) as i16,
                     that_bounds_self_grid.extract(3) as i16);
@@ -956,7 +961,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
             for row in first_row..last_row + 1 {
                 self.test_composite_collision_row(
                     dst, that, grid_displacement,
-                    (row_zero_off >> AFFINE_POINT) + self_origin_that_grid,
+                    (row_zero_off >> AFFINE_POINT - SUBAFFINE_SHIFT) +
+                        self_origin_that_grid,
                     row as i16,
                     that_bounds_self_grid.extract(1) as i16,
                     that_bounds_self_grid.extract(3) as i16);
@@ -1009,9 +1015,11 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         mask: u32
     ) {
         let nominal_a = i32x4::splat(row_zero.a()) +
-            (i32x4::splat(grid_displacement.snd().a()) * col >> AFFINE_POINT);
+            (i32x4::splat(grid_displacement.snd().a()) * col >>
+             AFFINE_POINT - SUBAFFINE_SHIFT);
         let nominal_b = i32x4::splat(row_zero.b()) +
-            (i32x4::splat(grid_displacement.snd().b()) * col >> AFFINE_POINT);
+            (i32x4::splat(grid_displacement.snd().b()) * col >>
+             AFFINE_POINT - SUBAFFINE_SHIFT);
         let approx_a: i32x4 = nominal_a >> CELL_HEX_SHIFT;
         let approx_b: i32x4 = nominal_b >> CELL_HEX_SHIFT;
 
@@ -1491,7 +1499,7 @@ mod test {
 
     proptest! {
         #![proptest_config(proptest::test_runner::Config {
-            cases: 6553600,
+            cases: 65536,
             .. proptest::test_runner::Config::default()
         })]
 
@@ -1502,11 +1510,11 @@ mod test {
         ) {
             // For an exact solution, hexagons would collide somewhere between
             // 2*CELL_L2_EDGE and 2*CELL_L2_VERTEX. Increase the latter by
-            // 13/10 to account for various precision loss. The former we
-            // reduce to half of what it would normally be due to the way the
+            // 12/10 to account for various precision loss. The former we
+            // reduce to 66% of what it would normally be due to the way the
             // collision test is approximated.
-            const AGGRESSIVE_DIST: u32 = CELL_L2_VERTEX as u32 * 2 * 13/10;
-            const CONSERVATIVE_DIST: u32 = CELL_L2_EDGE as u32;
+            const AGGRESSIVE_DIST: u32 = CELL_L2_VERTEX as u32 * 2 * 12/10;
+            const CONSERVATIVE_DIST: u32 = CELL_L2_EDGE as u32 * 2 * 66/100;
 
             let lhs_inv_rot = Affine2dH::rotate_hex(-lhs.common.theta());
 
