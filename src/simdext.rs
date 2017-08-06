@@ -409,8 +409,8 @@ fn i32x4_double_shar(a: i32x4, n: u32) -> i32x4 {
 #[cfg(not(target_feature = "sse2"))]
 #[inline(always)]
 fn i32x4_double_shar(a: i32x4, n: u32) -> i32x4 {
-    let base: i32x4 = a >> n;
-    let upper: i32x4 = a << 31 - n;
+    let base: i32x4 = (a.to_u32() >> n).to_i32();
+    let upper: i32x4 = a << 32 - n;
     base | i32x4::new(upper.extract(1), 0, upper.extract(3), 0)
 }
 
