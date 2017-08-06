@@ -54,9 +54,18 @@ pub trait SimdExt {
     fn hsum_3(self) -> Self::Lane;
 
     /// Compute self * that / 2**point without intermediate overflow or loss of
-    /// precision. No element of `small` may have a value outside of
-    /// [-32768,32767].
+    /// precision.
     fn mulfp(self, small: Self, point: u32) -> Self;
+
+    /// Compute the double-width product of corresponding even-numbered lanes
+    /// in the two vectors. Store the lower half of each product in the
+    /// corresponding even-numbered lanes and the upper half of each product in
+    /// the following odd-numbered lanes.
+    fn muld(self, rhs: Self) -> Self;
+
+    /// Interpret this vector as little-endian double words and perform a
+    /// arithmetic right shift by the given amount.
+    fn double_shar(self, n: u32) -> Self;
 
     /// Return the 2D L1 distance between the two values.
     ///
@@ -160,26 +169,22 @@ impl SimdExt for i32x4 {
     }
 
     #[inline(always)]
-    fn mulfp(self, small: i32x4, point: u32) -> i32x4 {
-        debug_assert!(0 == small.extract(0) >> 16 ||
-                      -1 == small.extract(0) >> 16);
-        debug_assert!(0 == small.extract(1) >> 16 ||
-                      -1 == small.extract(1) >> 16);
-        debug_assert!(0 == small.extract(2) >> 16 ||
-                      -1 == small.extract(2) >> 16);
+    fn mulfp(self, rhs: i32x4, point: u32) -> i32x4 {
+        let p02 = self.muld(rhs);
+        let p13 = self.shuf(1, 0, 3, 2).muld(rhs.shuf(1, 0, 3, 2));
+        let p02 = p02.double_shar(point);
+        let p13 = p13.double_shar(point);
+        p02.blend(p13, 00, 10, 02, 12)
+    }
 
-        let hi = (self >> 16) - (self >> 31);
-        let lo = self - (hi << 16);
+    #[inline(always)]
+    fn muld(self, rhs: i32x4) -> i32x4 {
+        i32x4_muld(self, rhs)
+    }
 
-        let hiprod = hi * small;
-        let hiprod = if point == 16 {
-            hiprod
-        } else if point < 16 {
-            hiprod << (16 - point)
-        } else {
-            hiprod >> (point - 16)
-        };
-        hiprod + (lo * small >> point)
+    #[inline(always)]
+    fn double_shar(self, n: u32) -> i32x4 {
+        i32x4_double_shar(self, n)
     }
 
     #[inline]
@@ -353,12 +358,71 @@ fn i32x4_abs(a: i32x4) -> i32x4 {
         i32x4::splat(0) - a, a)
 }
 
+#[cfg(target_feature = "sse2")]
+#[inline(always)]
+fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
+    use std::mem::transmute;
+    use simd::x86::sse2::i64x2;
+
+    extern "platform-intrinsic"{
+        // Weirdly, this definition differs from the Intel spec, though the
+        // distinction is largely moot.
+        fn x86_mm_mul_epi32(a: i32x4, b: i32x4) -> i64x2;
+    }
+
+    unsafe {
+        transmute(x86_mm_mul_epi32(a, b))
+    }
+}
+
+#[cfg(not(target_feature = "sse2"))]
+#[inline(always)]
+fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
+    // Not all platforms have i64x2, but LLVM can emulate it when not.
+    // Unfortunately the simd crate doesn't expose this, so define by hand.
+    extern "platform-intrinsic" {
+        fn simd_mul<T>(a: T, b: T) -> T;
+    }
+    #[repr(simd)]
+    struct I64x2(i64, i64);
+
+    let a = I64x2(a.extract(0) as i64, a.extract(2) as i64);
+    let b = I64x2(b.extract(0) as i64, b.extract(2) as i64);
+    let r = unsafe { simd_mul(a, b) };
+    i32x4::new(r.0 as i32, (r.0 >> 32) as i32,
+               r.1 as i32, (r.1 >> 32) as i32)
+}
+
+#[cfg(target_feature = "sse2")]
+#[inline(always)]
+fn i32x4_double_shar(a: i32x4, n: u32) -> i32x4 {
+    use std::mem::transmute;
+    use simd::x86::sse2::i64x2;
+
+    unsafe {
+        let a: i64x2 = transmute(a);
+        let a = a >> n;
+        transmute(a)
+    }
+}
+
+#[cfg(not(target_feature = "sse2"))]
+#[inline(always)]
+fn i32x4_double_shar(a: i32x4, n: u32) -> i32x4 {
+    let base: i32x4 = a >> n;
+    let upper: i32x4 = a << 31 - n;
+    base | i32x4::new(upper.extract(1), 0, upper.extract(3), 0)
+}
+
 #[cfg(test)]
 mod test {
     use std::i32;
     use test::{Bencher, black_box};
 
     use simd::*;
+
+    use proptest;
+
     use super::*;
 
     #[test]
@@ -468,6 +532,23 @@ mod test {
         assert_eq!(182, a.dist_3L2_squared(b));
         assert_eq!(3, a.dist_2Linf(b));
         assert_eq!(13, a.dist_3Linf(b));
+    }
+
+    proptest! {
+        #[test]
+        fn test_i32x4_muld(a in proptest::num::i32::ANY,
+                           b in proptest::num::i32::ANY) {
+            let p = (a as u64).wrapping_mul(b as u64);
+            let expected_lo = p as i32;
+            let expected_hi = (p >> 32) as i32;
+
+            let actual = i32x4::new(a, 99, a, -99).muld(
+                i32x4::new(b, 88, b, -88));
+            assert_eq!(expected_lo, actual.extract(0));
+            assert_eq!(expected_lo, actual.extract(2));
+            assert_eq!(expected_hi, actual.extract(1));
+            assert_eq!(expected_hi, actual.extract(3));
+        }
     }
 
     macro_rules! bench_dist {
