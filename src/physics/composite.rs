@@ -1249,7 +1249,7 @@ mod test {
     use test::{Bencher, black_box};
 
     use proptest;
-    use proptest::strategy::{BoxedStrategy, Strategy};
+    use proptest::strategy::Strategy;
 
     use super::*;
 
@@ -1268,32 +1268,34 @@ mod test {
         }
     }
 
-    fn arb_composite(size: i16) -> BoxedStrategy<ArbComposite> {
-        (proptest::collection::btree_set(
-            (-size..size, -size..size), 1..64),
-         (-65536..65536), (-65536..65536),
-         proptest::num::i16::ANY,
-         (-16384..16384), (-16384..16384)).prop_map(
-            |(cells, a, b, theta, a_offset, b_offset)| {
-                let mut ret = ArbComposite {
-                    common: UnpackedCommonObject {
-                        a, b,
-                        theta: Wrapping(theta),
-                        .. UnpackedCommonObject::default()
+    prop_compose! {
+        fn arb_composite(max_size: i16)(size in 1..max_size+1)
+            (cells in proptest::collection::btree_set(
+                (-size..size, -size..size), 1..64),
+             a in -65536..65536, b in -65536..65536,
+             theta in proptest::num::i16::ANY.prop_map(Wrapping),
+             a_offset in -16384..16384,
+             b_offset in -16384..16384)
+            -> ArbComposite
+        {
+            let mut ret = ArbComposite {
+                common: UnpackedCommonObject {
+                    a, b, theta,
+                    .. UnpackedCommonObject::default()
+                }.pack(),
+                data: unsafe { CompositeObject::build(
+                    UnpackedCompositeHeader {
+                        a_offset, b_offset,
+                        .. UnpackedCompositeHeader::default()
                     }.pack(),
-                    data: unsafe { CompositeObject::build(
-                        UnpackedCompositeHeader {
-                            a_offset, b_offset,
-                            .. UnpackedCompositeHeader::default()
-                        }.pack(),
-                        || cells.iter().map(|&v| v))
-                    },
-                };
-                let rad = ret.data.calc_span();
-                ret.common.set_rounded_span(
-                    CommonObject::round_span(rad));
-                ret
-            }).boxed()
+                    || cells.iter().map(|&v| v))
+                },
+            };
+            let rad = ret.data.calc_span();
+            ret.common.set_rounded_span(
+                CommonObject::round_span(rad));
+            ret
+        }
     }
 
     #[test]
