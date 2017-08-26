@@ -23,4 +23,5 @@ pub mod xform;
 pub mod composite;
 pub mod hilbert_sort;
 pub mod bounding_rhombus;
+pub mod implicit_tree;
 pub mod snapshot;

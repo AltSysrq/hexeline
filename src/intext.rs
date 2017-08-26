@@ -16,27 +16,38 @@
 pub trait UIntExt {
     /// Return the least integer `n` such that `n*n >= self`.
     fn sqrt_up(self) -> Self;
+    /// Return the least integer `n` such that `2**n >= self`.
+    fn log2_up(self) -> u8;
 }
 
-impl UIntExt for u32 {
-    #[inline(always)]
-    fn sqrt_up(self) -> Self {
-        // Flip through floating-point not because it is easy, but because it
-        // is *faster* than implementing it with integers in software.
-        //
-        // See commit ff2ecb93a4bec6d20938510184a20a34434edb34 for such a
-        // software implementation. It was in all cases inferior to this
-        // method. Some very rough numbers:
-        //
-        // - AMD64 SSE4.1: FP sqrt 8x faster
-        // - AMD64 SSE2: FP sqrt 3x faster
-        // - ARM7h: FP sqrt 2x faster
-        //
-        // All `u32`s can be accurately represented in an f64, so there is no
-        // loss of precision by doing this either.
-        (self as f64).sqrt().ceil() as u32
+macro_rules! uintext { ($typ:ty, $bits:expr) => {
+    impl UIntExt for $typ {
+        #[inline(always)]
+        fn sqrt_up(self) -> Self {
+            // Flip through floating-point not because it is easy, but because
+            // it is *faster* than implementing it with integers in software.
+            //
+            // See commit ff2ecb93a4bec6d20938510184a20a34434edb34 for such a
+            // software implementation. It was in all cases inferior to this
+            // method. Some very rough numbers:
+            //
+            // - AMD64 SSE4.1: FP sqrt 8x faster
+            // - AMD64 SSE2: FP sqrt 3x faster
+            // - ARM7h: FP sqrt 2x faster
+            //
+            // All `u32`s can be accurately represented in an f64, so there
+            // is no loss of precision by doing this either.
+            (self as f64).sqrt().ceil() as $typ
+        }
+
+        fn log2_up(self) -> u8 {
+            ($bits - (self - 1).leading_zeros()) as u8
+        }
     }
-}
+} }
+uintext!(u8, 8);
+uintext!(u16, 16);
+uintext!(u32, 32);
 
 #[cfg(test)]
 mod test {

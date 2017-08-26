@@ -1163,14 +1163,13 @@ impl<A : Array<Item = i32x4>> CompositeObject<SmallVec<A>> {
         }
 
         // Set up an empty composite
-        let rrows = log2_up(num_rows as i16);
+        let rrows = (num_rows as u16).log2_up();
         base.set_row_offset(min_row as i16);
         base.set_rows(rrows);
         debug_assert!(num_rows <= 65536);
         base.set_row_count((num_rows - 1) as u16);
-        let pitch = log2_up(
-            ((max_row_span as u32 + CHUNK_WIDTH - 1) /
-             CHUNK_WIDTH) as i16);
+        let pitch = ((max_row_span as u32 + CHUNK_WIDTH - 1) /
+                     CHUNK_WIDTH).log2_up();
         base.set_pitch(pitch);
 
         let mut dst = CompositeObject({
