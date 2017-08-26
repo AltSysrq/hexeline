@@ -20,7 +20,7 @@ pub use self::units::*;
 pub mod common_object;
 pub mod coords;
 pub mod xform;
-pub mod arena;
 pub mod composite;
 pub mod hilbert_sort;
 pub mod bounding_rhombus;
+pub mod snapshot;
