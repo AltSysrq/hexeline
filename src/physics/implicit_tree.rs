@@ -14,6 +14,7 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 use intext::UIntExt;
+use std::u32;
 
 /// A cursor into a conceptual implicit binary tree.
 ///
@@ -136,6 +137,7 @@ impl ImplicitTreeNavigator {
     /// `filter` is called on each node encountered; if it returns `false`, the
     /// node and all its children are skipped. `prefetch` is invoked for
     /// indices that will be traversed in the near future mut not immediately.
+    /// `prefetch` may also be called with invalid values.
     ///
     /// The tree is traversed in reverse pre-order; that is: parent, right,
     /// left. Doing the right branch first means that consecutive descents will
@@ -147,9 +149,14 @@ impl ImplicitTreeNavigator {
         (self, filter: F, prefetch: P) -> ImplicitTreeTraverser<F,P>
     {
         ImplicitTreeTraverser {
-            navigator: self,
             filter, prefetch,
-            done_current: false,
+            base: self.base,
+            index: self.root,
+            // Root+2 is always a power of two and is also the one we want.
+            // (For root=0, we get 2, which implies a tree size of 1, which is
+            // correct.)
+            depth: self.root - self.base + 2,
+            occupied: 0,
         }
     }
 }
@@ -157,16 +164,12 @@ impl ImplicitTreeNavigator {
 /// An iterator over a filtered implicit tree.
 #[derive(Clone, Copy, Debug)]
 pub struct ImplicitTreeTraverser<F, P> {
-    navigator: ImplicitTreeNavigator,
     filter: F,
     prefetch: P,
-    // If true, do not even consider the current node as a candidate, but
-    // instead immediately start unwinding.
-    //
-    // This is mainly used for leaves, where the normal logic of descending to
-    // the right node is not available. It is also used on the root node to
-    // indicate traversal has completed.
-    done_current: bool,
+    base: u32,
+    index: u32,
+    depth: u32,
+    occupied: u32,
 }
 
 impl<F : FnMut (u32) -> bool, P : FnMut (u32)> Iterator
@@ -175,41 +178,47 @@ for ImplicitTreeTraverser<F,P> {
 
     #[inline]
     fn next(&mut self) -> Option<u32> {
-        loop {
-            let index = self.navigator.index();
-            if self.done_current || !(self.filter)(index) {
-                self.done_current = false;
+        while u32::MAX != self.index {
+            let value = self.index + self.base;
+            // Prefetch this node's left child.
+            // The right child is at value-1. The left child is at
+            // value-1-size. size = depth/2-1, so left child is at
+            // value-depth/2.
+            (self.prefetch)(value.wrapping_sub(self.depth >> 1));
 
-                // Rejected by the filter. Skip the subtree and move to the
-                // next node.
-                loop {
-                    if self.navigator.is_root() {
-                        // Unwound to the root; we're done.
-                        self.done_current = true;
-                        return None;
-                    } else if self.navigator.up() {
-                        // Unwound from a right branch; move to the left branch
-                        // and test that subtree.
-                        self.navigator.left();
-                        // Break the inner loop but continue the outer loop
-                        break;
-                    } // Else it was a left branch; keep going up
-                }
+            let accept = (self.filter)(value);
+            let old_depth = self.depth;
+
+            // Mark the presence of this node.
+            self.occupied ^= self.depth;
+
+            // If acceptable and this node has children, move depth down 1
+            // If the node is a leaf and !is_second_at_level, depth unchanged
+            // If not acceptable and !is_second_at_level, depth unchanged
+            // Otherwise, depth increases to the lowest partially-filled level
+            //
+            // For the "depth unchanged" cases, note that the current level
+            // _is_ the lowest partially-filled level. So in effect, we shift
+            // depth right 1 only if acceptable and not a leaf, and otherwise
+            // reset depth from occupied.
+            let descend = accept as u32 & !(self.depth >> 1);
+            self.depth = if 0 == descend {
+                self.occupied.lowest_set_bit()
             } else {
-                // Acceptable node. We'll be emitting this one. If it has
-                // children, prefetch the left and move to the right. If not,
-                // remember not to do this node again.
-                if self.navigator.is_leaf() {
-                    self.done_current = true;
-                } else {
-                    let mut left_branch = self.navigator;
-                    left_branch.left();
-                    (self.prefetch)(left_branch.index());
-                    self.navigator.right();
-                }
-                return Some(index);
+                self.depth >> 1
+            };
+
+            // If acceptable, we move left exactly one. Otherwise, we jump over
+            // the whole subtree.
+            if accept {
+                self.index = self.index.wrapping_sub(1);
+                return Some(value);
+            } else {
+                self.index = self.index.wrapping_sub(old_depth - 1);
             }
         }
+
+        None
     }
 }
 
@@ -305,6 +314,8 @@ impl ImplicitTreeScanner {
 mod test {
     use std::cell::Cell;
     use std::rc::Rc;
+
+    use proptest::prelude::*;
 
     use super::*;
 
@@ -448,6 +459,64 @@ mod test {
             .zip(actual_traversal.into_iter()).enumerate()
         {
             assert_eq!(a, b, "Incorrect traversal at {}", ix);
+        }
+    }
+
+    #[test]
+    fn traverser_prefetches_left_children() {
+        let data = build_tree();
+        let prefetched = Cell::new(0);
+        for node in ImplicitTreeNavigator::root_of(data.len() as u32 - 1)
+            .traverse_rp(|_| true, |ix| prefetched.set(ix))
+        {
+            if let Some(branch) = data[node as usize].branch {
+                assert_eq!(branch.left, prefetched.get());
+            }
+        }
+    }
+
+    fn tree_with_filter() -> BoxedStrategy<(Vec<Node>,Vec<bool>)> {
+        let nodes = build_tree();
+        let len = nodes.len();
+
+        (Just(nodes), prop::collection::vec(
+            prop::bool::weighted(0.2), len..len+1)).boxed()
+    }
+
+    proptest! {
+        #[test]
+        fn traverse_handles_filters_correctly(
+            (ref data, ref reject) in tree_with_filter()
+        ) {
+            let mut expected_traversal = Vec::new();
+
+            fn traverse(dst: &mut Vec<u32>, index: u32, data: &[Node],
+                        reject: &[bool]) {
+                if reject[index as usize] { return; }
+
+                dst.push(index);
+                if let Some(branch) = data[index as usize].branch {
+                    traverse(dst, branch.right, data, reject);
+                    traverse(dst, branch.left, data, reject);
+                }
+            }
+            traverse(&mut expected_traversal, data.len() as u32 - 1,
+                     data, reject);
+
+            let mut actual_traversal = Vec::new();
+            for node in ImplicitTreeNavigator::root_of(data.len() as u32 - 1)
+                .traverse_rp(|ix| !reject[ix as usize], |_| ())
+            {
+                assert!(actual_traversal.len() < data.len());
+                actual_traversal.push(node);
+            }
+
+            assert_eq!(expected_traversal.len(), actual_traversal.len());
+            for (ix, (a, b)) in expected_traversal.into_iter()
+                .zip(actual_traversal.into_iter()).enumerate()
+            {
+                assert_eq!(a, b, "Incorrect traversal at {}", ix);
+            }
         }
     }
 }
