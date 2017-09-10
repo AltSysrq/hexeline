@@ -162,8 +162,12 @@ static HILBERT_TABLE: [u16;256] = [
     0x0095, 0x0096, 0x0099, 0x009A, 0x00A5, 0x00A6, 0x00A9, 0x00AA,
 ];
 
+/// Convert the given 2-dimensional coordinate (a `Vos` or `Vhs`) to a Hilbert
+/// coordinate.
+///
+/// Only the lower 48 bits of the result are used.
 #[allow(unused_assignments)]
-fn xy_to_hilbert(pos: i32x4) -> u64 {
+pub fn xy_to_hilbert(pos: i32x4) -> u64 {
     // Deal with negative values by just offsetting everything by (1<<31) and
     // treating the vector as unsigned.
     let pos = pos - i32x4::splat(i32::MIN);

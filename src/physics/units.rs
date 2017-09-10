@@ -18,6 +18,8 @@ use std::num::Wrapping;
 pub type Instant = u32;
 pub const SECOND: Instant = 100;
 
+pub const SCREEN: i32 = 65536;
+
 pub type Angle = Wrapping<i16>;
 pub const DEG_90_CW: Angle = Wrapping(16384);
 pub const DEG_90_CCW: Angle = Wrapping(-16384);

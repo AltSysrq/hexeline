@@ -13,23 +13,29 @@
 // OF  CONTRACT, NEGLIGENCE  OR OTHER  TORTIOUS ACTION,  ARISING OUT  OF OR  IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-#![feature(test, platform_intrinsics, cfg_target_feature,
-           conservative_impl_trait, core_intrinsics, repr_simd)]
+#![cfg_attr(not(test), allow(unused_features))]
+#![feature(test, platform_intrinsics, cfg_target_feature, offset_to,
+           conservative_impl_trait, core_intrinsics, repr_simd,
+           hint_core_should_pause)]
 #![allow(dead_code)]
 
 extern crate arrayvec;
+extern crate bit_set;
+#[macro_use] extern crate bitflags;
 extern crate cgmath as cg;
+extern crate crossbeam;
 extern crate env_logger;
-extern crate fnv;
 extern crate gl;
+#[macro_use] extern crate lazy_static;
 #[macro_use] extern crate log;
-extern crate png;
+extern crate odds;
 extern crate sdl2;
 extern crate simd;
 extern crate smallvec;
-extern crate test;
 
+#[cfg(test)] extern crate fnv;
 #[cfg(test)] #[macro_use] extern crate proptest;
+#[cfg(test)] extern crate test;
 
 use std::env;
 use std::os::raw::c_char;

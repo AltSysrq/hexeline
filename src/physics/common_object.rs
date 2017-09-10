@@ -20,8 +20,9 @@ use std::i32;
 use simd::*;
 use simdext::*;
 
-use physics::Angle;
-use physics::coords::Vhs;
+use super::Angle;
+use super::bounding_rhombus::BoundingRhombus;
+use super::coords::Vhs;
 
 pub const ROUNDED_SPAN_SHIFT: u32 = 8;
 pub const ROUNDED_SPAN_FACTOR: u32 = 1 << ROUNDED_SPAN_SHIFT;
@@ -135,10 +136,12 @@ pub struct UnpackedCommonObject {
     /// If `object_type` identifies an object type with out-of-line data, a
     /// compressed pointer into the extended data heap. Otherwise, some
     /// type-specific data.
+    ///
+    /// This is such a pointer iff object_type >= 128. See also
+    /// `CommonObject::has_extended_data()`.
     pub extended_data: u16,
-    /// If `extended_data` is a pointer to a DST, a type-specific
-    /// representation of the length part of the DST pointer. Otherwise, extra
-    /// type-specific data.
+    /// If `extended_data` is a pointer to a DST, the size of the data as a
+    /// count of `i32x4`s. Otherwise, extra type-specific data.
     pub data_dst_size: u8,
     /// The A velocity multiplied by 4.
     pub vax4: i16,
@@ -241,6 +244,11 @@ impl CommonObject {
         Vhs::from_repr(self.p)
     }
 
+    /// Return the velocity (times 4) of the A and B coordinates.
+    pub fn vx4(&self) -> Vhs {
+        Vhs::from_repr(self.d >> 16)
+    }
+
     /// Advance this object forward one tick, considering only the common data.
     ///
     /// `tick_mod_4` is the lower 2 bits of the current tick number, used to
@@ -303,6 +311,18 @@ impl CommonObject {
     pub fn round_span(span: u32) -> u8 {
         debug_assert!(span <= 255 << ROUNDED_SPAN_SHIFT);
         ((span + ROUNDED_SPAN_FACTOR - 1) >> ROUNDED_SPAN_SHIFT) as u8
+    }
+
+    #[inline(always)]
+    pub fn bounding_rhombus(self) -> BoundingRhombus {
+        BoundingRhombus::around(
+            self.pos(),
+            (self.rounded_span() as i32) << ROUNDED_SPAN_SHIFT)
+    }
+
+    #[inline(always)]
+    pub fn has_extended_data(self) -> bool {
+        self.object_type() >= 128
     }
 }
 

@@ -5,11 +5,16 @@ authors = ["Jason Lingle <jason@lin.gl>"]
 
 [dependencies]
 arrayvec = { version = "0.3.23", features = ["use_union"] }
+bitflags = "1.0.0"
+bit-set = "0.4.0"
 cgmath = { version = "0.14.1", features = ["use_simd"] }
+crossbeam = "0.3.0"
 env_logger = "0.4.3"
 fnv = "1.0.5"
 gl = "0.6.3"
+lazy_static  = "0.2.8"
 log = "0.3.8"
+odds = "0.2.25"
 png = "0.7.0"
 sdl2 = "0.30.0"
 simd = "0.2.0"

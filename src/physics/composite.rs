@@ -39,6 +39,7 @@ use std::i16;
 use std::slice;
 
 use arrayvec::ArrayVec;
+use odds::slice_unchecked;
 use simd::*;
 use smallvec::{Array, SmallVec};
 
@@ -553,10 +554,58 @@ pub type CollisionSet = ArrayVec<[[(i16,i16);2];COLLISION_SET_SIZE]>;
 pub struct CompositeObject<T : Borrow<[i32x4]>>(T);
 
 impl<T : Borrow<[i32x4]>> CompositeObject<T> {
+    /// Wraps the given inner array into a `CompositeObject`.
+    ///
+    /// ## Unsafety
+    ///
+    /// Bounds checking is only performed in debug builds.
+    #[inline(always)]
+    pub unsafe fn wrap(inner: T) -> Self {
+        {
+            let data = inner.borrow();
+            debug_assert!(data.len() >= 1);
+            let header = CompositeHeader(*data.get_unchecked(0));
+            debug_assert!(data.len() >= 1 +
+                          (1 << (header.rows() + header.pitch() - 1)));
+        }
+        CompositeObject(inner)
+    }
+
+    #[inline(always)]
+    pub fn as_inner(&self) -> &T {
+        &self.0
+    }
+
+    /// Return a mutable reference to the inner data.
+    ///
+    /// ## Unsafety
+    ///
+    /// Mutating the header or reducing the length of the inner value can break
+    /// invariants `CompositeObject` relies on.
+    #[inline(always)]
+    pub unsafe fn as_inner_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+
+    #[inline(always)]
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+
     /// Returns the header of this composite.
     #[inline(always)]
     pub fn header(&self) -> CompositeHeader {
         CompositeHeader(*unsafe { self.0.borrow().get_unchecked(0) })
+    }
+
+    /// Returns the slice of data beyond the end of the common composite data.
+    #[inline(always)]
+    pub fn tail(&self) -> &[i32x4] {
+        let s = self.0.borrow();
+        let off = 1 + (1 << self.header().rows() << self.header().pitch());
+        unsafe {
+            slice_unchecked(s, off, s.len())
+        }
     }
 
     #[inline(always)]

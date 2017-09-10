@@ -18,10 +18,14 @@
 mod units;
 pub use self::units::*;
 pub mod common_object;
+pub mod event;
 pub mod coords;
 pub mod xform;
 pub mod composite;
 pub mod hilbert_sort;
 pub mod bounding_rhombus;
 pub mod implicit_tree;
+pub mod id_free_list;
 pub mod snapshot;
+
+pub mod extended_object;

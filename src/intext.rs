@@ -18,6 +18,8 @@ pub trait UIntExt {
     fn sqrt_up(self) -> Self;
     /// Return the least integer `n` such that `2**n >= self`.
     fn log2_up(self) -> u8;
+    /// Return `self` with all bits other than the right-most 1 cleared.
+    fn lowest_set_bit(self) -> Self;
 }
 
 macro_rules! uintext { ($typ:ty, $bits:expr) => {
@@ -40,8 +42,19 @@ macro_rules! uintext { ($typ:ty, $bits:expr) => {
             (self as f64).sqrt().ceil() as $typ
         }
 
+        #[inline(always)]
         fn log2_up(self) -> u8 {
             ($bits - (self - 1).leading_zeros()) as u8
+        }
+
+        #[inline(always)]
+        fn lowest_set_bit(self) -> $typ {
+            // Subtracting 1 inverts all bits up to and including the first set
+            // bit. XORing the difference with self clears all the unchanged
+            // bits and gives a mask with all bits between the one we want and
+            // 0 set. We can then AND with self to clear all the bits below the
+            // one we want.
+            self & (self ^ self.wrapping_sub(1))
         }
     }
 } }
