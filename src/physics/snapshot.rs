@@ -39,7 +39,7 @@ use std::ptr;
 use std::slice;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::atomic::hint_core_should_pause;
+use std::sync::atomic::spin_loop_hint;
 
 use arrayvec::ArrayVec;
 use crossbeam::sync::ArcCell;
@@ -647,7 +647,7 @@ impl SnapshotWriter {
                     break;
                 }
 
-                hint_core_should_pause();
+                spin_loop_hint();
                 continue;
             }
 

@@ -14,8 +14,8 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #![cfg_attr(not(test), allow(unused_features))]
-#![feature(test, platform_intrinsics, cfg_target_feature, offset_to,
-           conservative_impl_trait, core_intrinsics, repr_simd,
+#![feature(test, platform_intrinsics, offset_to,
+           core_intrinsics, repr_simd,
            hint_core_should_pause)]
 #![allow(dead_code)]
 
