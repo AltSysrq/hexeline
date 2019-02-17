@@ -4,28 +4,25 @@ version = "0.1.0"
 authors = ["Jason Lingle <jason@lin.gl>"]
 
 [dependencies]
-arrayvec = { version = "0.3.23", features = ["use_union"] }
+arc-swap = "0.3.7"
+arrayvec = "0.4.10"
 bitflags = "1.0.0"
-bit-set = "0.4.0"
-cgmath = { version = "0.14.1" }
-crossbeam = "0.3.0"
-env_logger = "0.4.3"
-fnv = "1.0.5"
-gl = "0.6.3"
-lazy_static  = "0.2.8"
-log = "0.3.8"
+bit-set = "0.5.0"
+cgmath = "0.14.1"
+env_logger = "0.6.0"
+fnv = "1.0"
+gl = "0.11.0"
+lazy_static  = "1.2"
+log = "0.4.6"
 odds = "0.2.25"
-png = "0.7.0"
+png = "0.14.0"
 sdl2 = "0.32.0"
+sdl2-sys = { version = "0.32", features = ["bundled"] }
 packed_simd = "0.3.3"
-smallvec = "0.4.1"
-
-[dependencies.sdl2-sys]
-version = "0.32"
-features = ["bundled"]
+smallvec = "0.6.8"
 
 [dev-dependencies]
-proptest = "0.3.3"
+proptest = "0.9.1"
 
 [profile.test]
 opt-level = 1

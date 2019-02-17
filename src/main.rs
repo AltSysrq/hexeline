@@ -17,11 +17,11 @@
 #![feature(test, platform_intrinsics, core_intrinsics, repr_simd, stdsimd)]
 #![allow(dead_code)]
 
+extern crate arc_swap;
 extern crate arrayvec;
 extern crate bit_set;
 #[macro_use] extern crate bitflags;
 extern crate cgmath as cg;
-extern crate crossbeam;
 extern crate env_logger;
 extern crate gl;
 #[macro_use] extern crate lazy_static;
@@ -66,7 +66,7 @@ fn main() {
         }
     }
 
-    env_logger::init().expect("Failed to initialise logging");
+    env_logger::init();
 
     match env::args().nth(1).as_ref().map(|s| &**s) {
         Some("rpn") => {

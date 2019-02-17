@@ -42,7 +42,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::atomic::spin_loop_hint;
 
 use arrayvec::ArrayVec;
-use crossbeam::sync::ArcCell;
+use arc_swap::ArcSwap;
 use odds::{get_unchecked, get_unchecked_mut, slice_unchecked};
 use simd::*;
 use simdext::*;
@@ -248,14 +248,14 @@ pub struct SnapshotWriter {
     /// set to 255. It might seem like the collision stage could do this itself
     /// by writing to indices below `num_objects`, but this is not sound as the
     /// update stage needs to be able to clone the array when it reallocates.
-    objects: ArcCell<(Vec<CommonObject>, Vec<BoundingRhombus>)>,
+    objects: ArcSwap<(Vec<CommonObject>, Vec<BoundingRhombus>)>,
     num_objects: AtomicUsize,
     /// The current arena memory. Similarly to `objects` et al, this is
     /// actively appended to by the update stage while the collision stage may
     /// be reading from it. There is know way for the collision stage to know
     /// the actual arena size; it must simply trust that any references in the
     /// initialised portion of `objects` are in-bounds.
-    arena: ArcCell<ArenaMemory>,
+    arena: ArcSwap<ArenaMemory>,
     /// The amount of `arena` already in use by other snapshots.
     init_arena_size: usize,
 
@@ -310,11 +310,11 @@ impl SnapshotWriter {
     /// later tick than `prev_snapshot`.
     fn wrap(prev_snapshot: Arc<Snapshot>, object_cap: usize) -> Self {
         SnapshotWriter {
-            objects: ArcCell::new(Arc::new(
+            objects: ArcSwap::new(Arc::new(
                 (Vec::with_capacity(object_cap),
                  Vec::with_capacity(2 + object_cap)))),
             num_objects: AtomicUsize::new(0),
-            arena: ArcCell::new(prev_snapshot.arena.clone()),
+            arena: ArcSwap::new(prev_snapshot.arena.clone()),
             init_arena_size: prev_snapshot.arena_size,
             update_started: AtomicBool::new(false),
             collision_started: AtomicBool::new(false),
@@ -342,11 +342,11 @@ impl SnapshotWriter {
         let num_objects = prev_snapshot.objects.len();
 
         SnapshotWriter {
-            objects: ArcCell::new(Arc::new(
+            objects: ArcSwap::new(Arc::new(
                 (Vec::with_capacity(num_objects + 256),
                  Vec::with_capacity(2 + num_objects + 256)))),
             num_objects: AtomicUsize::new(0),
-            arena: ArcCell::new(Arc::new(arena)),
+            arena: ArcSwap::new(Arc::new(arena)),
             init_arena_size: prev_snapshot.arena_size,
             update_started: AtomicBool::new(false),
             collision_started: AtomicBool::new(false),
@@ -417,7 +417,7 @@ pub struct SnapshotUpdatePipeline<'a> {
 
 impl<'a> SnapshotUpdatePipeline<'a> {
     fn new(writer: &'a SnapshotWriter, events: &'a FrameObjectEvents) -> Self {
-        let objects = writer.objects.get();
+        let objects = writer.objects.load();
         let capacity = objects.0.capacity();
         assert_eq!(capacity + 2, objects.1.capacity());
         assert!(writer.prev_snapshot.objects.len() <= capacity);
@@ -425,7 +425,7 @@ impl<'a> SnapshotUpdatePipeline<'a> {
         SnapshotUpdatePipeline {
             writer, events, objects, capacity,
             reserved: writer.prev_snapshot.objects.len(),
-            arena: writer.arena.get(),
+            arena: writer.arena.load(),
             tree_builder: ImplicitTreeBuilder::new(),
             prev_bounding_rhombus: BoundingRhombus::around(Vhs(0, 0), 0),
             collisions_in: &writer.prev_snapshot.collisions,
@@ -515,7 +515,7 @@ impl<'a> SnapshotUpdatePipeline<'a> {
             self.reserved = new_count;
             self.capacity = new_cap;
             self.objects = Arc::new((new_objects, new_rtree));
-            self.writer.objects.set(self.objects.clone());
+            self.writer.objects.store(self.objects.clone());
         }
     }
 
@@ -588,7 +588,7 @@ impl<'a> SnapshotUpdatePipeline<'a> {
                 ptr::copy_nonoverlapping(self.arena.base, new_arena.base, base);
             }
             self.arena = Arc::new(new_arena);
-            self.writer.arena.set(self.arena.clone());
+            self.writer.arena.store(self.arena.clone());
         }
 
         unsafe {
@@ -653,7 +653,7 @@ impl SnapshotWriter {
 
             run_collision_through_available(
                 &mut result, &mut consumed, &mut scanner,
-                available, self.objects.get(), self.arena.get());
+                available, self.objects.load(), self.arena.load());
         }
 
         result
@@ -781,7 +781,7 @@ impl SnapshotWriter {
                     flags: FinaliseFlags)
                     -> SnapshotWriter {
         let num_objects = update.num_objects;
-        let objects = self.objects.get();
+        let objects = self.objects.load();
         drop(self.objects);
 
         let (mut objects, mut rhombus_tree) = match Arc::try_unwrap(objects) {
@@ -794,7 +794,7 @@ impl SnapshotWriter {
             rhombus_tree.set_len(num_objects + 2);
         }
 
-        let mut arena = self.arena.get();
+        let mut arena = self.arena.load();
         let mut arena_size = update.arena_size;
         let mut free_ids = update.free_ids;
 

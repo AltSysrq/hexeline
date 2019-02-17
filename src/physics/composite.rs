@@ -1122,10 +1122,10 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
                 // No need for bounds checking due to the row and
                 // column padding.
                 if $hits.$meth() {
-                    if dst.push([(row as i16, col.extract($lane) as i16),
-                                 (approx_a.extract($lane) as i16 + $ao,
-                                  approx_b.extract($lane) as i16 + $bo)])
-                        .is_some()
+                    if dst.try_push([(row as i16, col.extract($lane) as i16),
+                                     (approx_a.extract($lane) as i16 + $ao,
+                                      approx_b.extract($lane) as i16 + $bo)])
+                        .is_err()
                     {
                         return;
                     }
