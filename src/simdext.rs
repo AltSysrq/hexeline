@@ -263,13 +263,13 @@ fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
 #[cfg(all(not(target_feature = "sse4.1"), not(target_feature = "neon")))]
 #[inline(always)]
 fn i32x4_nsw_max(a: i32x4, b: i32x4) -> i32x4 {
-    bool32ix4::from_repr((a - b) >> 31).select(b, a)
+    m32x4::from_cast((a - b) >> 31).select(b, a)
 }
 
 #[cfg(all(not(target_feature = "sse4.1"), not(target_feature = "neon")))]
 #[inline(always)]
 fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
-    bool32ix4::from_repr((a - b) >> 31).select(a, b)
+    m32x4::from_cast((a - b) >> 31).select(a, b)
 }
 
 #[cfg(target_feature = "neon")]
@@ -321,7 +321,7 @@ fn i32x4_movemask(a: i32x4) -> u32 {
 #[cfg(not(target_feature = "sse"))]
 #[inline(always)]
 fn i32x4_movemask(a: i32x4) -> u32 {
-    let bits = bool32ix4::from_repr(a >> 31);
+    let bits = m32x4::from_repr(a >> 31);
     ((bits.extract(0) as u32) << 0) |
     ((bits.extract(1) as u32) << 1) |
     ((bits.extract(2) as u32) << 2) |
@@ -337,7 +337,7 @@ fn i32x4_any_sign_bit(a: i32x4) -> bool {
 #[cfg(not(target_feature = "sse"))]
 #[inline(always)]
 fn i32x4_any_sign_bit(a: i32x4) -> bool {
-    bool32ix4::from_repr(a >> 31).any()
+    m32x4::from_repr(a >> 31).any()
 }
 
 #[cfg(target_feature = "ssse3")]
@@ -351,7 +351,7 @@ fn i32x4_abs(a: i32x4) -> i32x4 {
 #[cfg(not(target_feature = "ssse3"))]
 #[inline(always)]
 fn i32x4_abs(a: i32x4) -> i32x4 {
-    m32ix4::from_repr(a >> 31).select(i32x4::splat(0) - a, a)
+    m32x4::from_cast(a >> 31).select(i32x4::splat(0) - a, a)
 }
 
 #[cfg(target_feature = "sse4.1")]
@@ -368,8 +368,7 @@ fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
 #[cfg(all(target_feature = "sse2", not(target_feature = "sse4.1")))]
 fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
     use std::mem::transmute;
-    use simd::u64x2;
-    use std::arch::x86_64::__mm_mul_epu32;
+    use std::arch::x86_64::_mm_mul_epu32;
 
     let u: i32x4 = unsafe {
         transmute(_mm_mul_epu32(transmute(a), transmute(b)))
