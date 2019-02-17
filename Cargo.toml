@@ -7,7 +7,7 @@ authors = ["Jason Lingle <jason@lin.gl>"]
 arrayvec = { version = "0.3.23", features = ["use_union"] }
 bitflags = "1.0.0"
 bit-set = "0.4.0"
-cgmath = { version = "0.14.1", features = ["use_simd"] }
+cgmath = { version = "0.14.1" }
 crossbeam = "0.3.0"
 env_logger = "0.4.3"
 fnv = "1.0.5"
@@ -16,9 +16,13 @@ lazy_static  = "0.2.8"
 log = "0.3.8"
 odds = "0.2.25"
 png = "0.7.0"
-sdl2 = "0.30.0"
-simd = "0.2.0"
+sdl2 = "0.32.0"
+packed_simd = "0.3.3"
 smallvec = "0.4.1"
+
+[dependencies.sdl2-sys]
+version = "0.32"
+features = ["bundled"]
 
 [dev-dependencies]
 proptest = "0.3.3"

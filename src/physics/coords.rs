@@ -1,5 +1,5 @@
 //-
-// Copyright (c) 2017 Jason Lingle
+// Copyright (c) 2017, 2019 Jason Lingle
 //
 // Permission to  use, copy,  modify, and/or distribute  this software  for any
 // purpose  with or  without fee  is hereby  granted, provided  that the  above
@@ -238,7 +238,7 @@ use simdext::*;
 ///
 /// A value of 9 means there is one column of hexagons every 512 A units, or
 /// every 418 X units; i.e., 104.5 columns per screen width.
-pub const CELL_HEX_SHIFT: u8 = 9;
+pub const CELL_HEX_SHIFT: u32 = 9;
 /// Mask to extract the fractional digits from a hexagonal coordinate on a cell
 /// grid.
 pub const CELL_HEX_MASK: i32 = (1 << CELL_HEX_SHIFT) - 1;
@@ -347,7 +347,7 @@ impl<S : Space> RedundantVector<S> {
     pub fn linf(self) -> u32 {
         use std::cmp::max;
 
-        let a = self.repr().abs().to_u32();
+        let a = u32x4::from_cast(self.repr().abs());
         max(max(a.extract(0), a.extract(1)), a.extract(2))
     }
 
@@ -478,9 +478,7 @@ macro_rules! vector_common {
         binop!(S, $name, $name<S>, rhs, rhs.0, BitOr, bitor, |);
         binop!(S, $name, $name<S>, rhs, rhs.0, BitXor, bitxor, ^);
         binop!(S, $name, $name<S>, rhs, rhs.0, Mul, mul, *);
-        binop!(S, $name, u8, rhs, rhs, Shl, shl, <<);
         binop!(S, $name, u32, rhs, rhs, Shl, shl, <<);
-        binop!(S, $name, u8, rhs, rhs, Shr, shr, >>);
         binop!(S, $name, u32, rhs, rhs, Shr, shr, >>);
         binop!(S, $name, $name<S>, rhs, rhs.0, Sub, sub, -);
 
@@ -647,7 +645,7 @@ impl Vhs {
         let (a, b, valid_mask) = self.to_grid_overlap_validity();
         let a: i32x4 = a >> CELL_HEX_SHIFT;
         let b: i32x4 = b >> CELL_HEX_SHIFT;
-        let mask = bool32ix4::from_repr(valid_mask >> 31);
+        let mask = m32x4::from_cast(valid_mask >> 31);
         let absent = i32x4::splat(-32768);
         (mask.select(a, absent), mask.select(b, absent))
     }

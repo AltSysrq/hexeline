@@ -14,9 +14,7 @@
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #![cfg_attr(not(test), allow(unused_features))]
-#![feature(test, platform_intrinsics, offset_to,
-           core_intrinsics, repr_simd,
-           hint_core_should_pause)]
+#![feature(test, platform_intrinsics, core_intrinsics, repr_simd, stdsimd)]
 #![allow(dead_code)]
 
 extern crate arrayvec;
@@ -30,7 +28,7 @@ extern crate gl;
 #[macro_use] extern crate log;
 extern crate odds;
 extern crate sdl2;
-extern crate simd;
+extern crate packed_simd as simd;
 extern crate smallvec;
 
 #[cfg(test)] extern crate fnv;

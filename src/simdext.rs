@@ -1,5 +1,5 @@
 //-
-// Copyright (c) 2017 Jason Lingle
+// Copyright (c) 2017, 2019 Jason Lingle
 //
 // Permission to  use, copy,  modify, and/or distribute  this software  for any
 // purpose  with or  without fee  is hereby  granted, provided  that the  above
@@ -230,17 +230,17 @@ impl SimdExt for i32x4 {
 impl SimdExt4 for i32x4 {
     #[inline(always)]
     fn shuf(self, a: u32, b: u32, c: u32, d: u32) -> i32x4 {
-        i32x4::new(self.extract(a), self.extract(b),
-                   self.extract(c), self.extract(d))
+        i32x4::new(self.extract(a as usize), self.extract(b as usize),
+                   self.extract(c as usize), self.extract(d as usize))
     }
 
     #[inline(always)]
     fn blend(self, other: Self, a: u32, b: u32, c: u32, d: u32) -> Self {
         macro_rules! which {
             ($v:expr) => { if $v < 10 {
-                self.extract($v)
+                self.extract($v as usize)
             } else {
-                other.extract($v - 10)
+                other.extract($v as usize - 10)
             } }
         }
 
@@ -251,15 +251,13 @@ impl SimdExt4 for i32x4 {
 #[cfg(target_feature = "sse4.1")]
 #[inline(always)]
 fn i32x4_nsw_max(a: i32x4, b: i32x4) -> i32x4 {
-    use simd::x86::sse4_1::Sse41I32x4;
-    Sse41I32x4::max(a, b)
+    a.max(b)
 }
 
 #[cfg(target_feature = "sse4.1")]
 #[inline(always)]
 fn i32x4_nsw_min(a: i32x4, b: i32x4) -> i32x4 {
-    use simd::x86::sse4_1::Sse41I32x4;
-    Sse41I32x4::min(a, b)
+    a.min(b)
 }
 
 #[cfg(all(not(target_feature = "sse4.1"), not(target_feature = "neon")))]
@@ -313,12 +311,10 @@ fn i32x4_nsw_clamp3(a: i32x4, lower: i32x4, upper: i32x4) -> i32x4 {
 #[cfg(target_feature = "sse")]
 #[inline(always)]
 fn i32x4_movemask(a: i32x4) -> u32 {
-    extern "platform-intrinsic"{
-        fn x86_mm_movemask_ps(a: f32x4) -> i32;
-    }
+    use std::arch::x86_64::_mm_movemask_ps;
+    use std::mem;
     unsafe {
-        use std::mem;
-        x86_mm_movemask_ps(mem::transmute(a)) as u32
+        _mm_movemask_ps(mem::transmute(a)) as u32
     }
 }
 
@@ -347,45 +343,36 @@ fn i32x4_any_sign_bit(a: i32x4) -> bool {
 #[cfg(target_feature = "ssse3")]
 #[inline(always)]
 fn i32x4_abs(a: i32x4) -> i32x4 {
-    use simd::x86::ssse3::Ssse3I32x4;
-    Ssse3I32x4::abs(a)
+    use std::arch::x86_64::_mm_abs_epi32;
+    use std::mem::transmute;
+    unsafe { transmute(_mm_abs_epi32(transmute(a))) }
 }
 
 #[cfg(not(target_feature = "ssse3"))]
 #[inline(always)]
 fn i32x4_abs(a: i32x4) -> i32x4 {
-    bool32ix4::from_repr(a >> 31).select(
-        i32x4::splat(0) - a, a)
+    m32ix4::from_repr(a >> 31).select(i32x4::splat(0) - a, a)
 }
 
 #[cfg(target_feature = "sse4.1")]
 #[inline(always)]
 fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
+    use std::arch::x86_64::_mm_mul_epi32;
     use std::mem::transmute;
-    use simd::x86::sse2::i64x2;
-
-    extern "platform-intrinsic"{
-        // Weirdly, this definition differs from the Intel spec, though the
-        // distinction is largely moot.
-        fn x86_mm_mul_epi32(a: i32x4, b: i32x4) -> i64x2;
-    }
 
     unsafe {
-        transmute(x86_mm_mul_epi32(a, b))
+        transmute(_mm_mul_epi32(transmute(a), transmute(b)))
     }
 }
 
 #[cfg(all(target_feature = "sse2", not(target_feature = "sse4.1")))]
 fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
     use std::mem::transmute;
-    use simd::x86::sse2::u64x2;
-
-    extern "platform-intrinsic"{
-        fn x86_mm_mul_epu32(a: u32x4, b: u32x4) -> u64x2;
-    }
+    use simd::u64x2;
+    use std::arch::x86_64::__mm_mul_epu32;
 
     let u: i32x4 = unsafe {
-        transmute(x86_mm_mul_epu32(transmute(a), transmute(b)))
+        transmute(_mm_mul_epu32(transmute(a), transmute(b)))
     };
 
     // The high words are incorrect since the 32-bit inputs were not sign
@@ -408,16 +395,14 @@ fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
         fn simd_mul<T>(a: T, b: T) -> T;
         fn simd_extract<T, U>(a: T, ix: u32) -> U;
     }
-    #[repr(simd)]
-    #[derive(Clone, Copy)]
-    struct I64x2(i64, i64);
+    use simd::i64x2;
     #[inline(always)]
-    fn extract(v: I64x2, ix: u32) -> i64 {
+    fn extract(v: i64x2, ix: u32) -> i64 {
         unsafe { simd_extract(v, ix) }
     }
 
-    let a = I64x2(a.extract(0) as i64, a.extract(2) as i64);
-    let b = I64x2(b.extract(0) as i64, b.extract(2) as i64);
+    let a = i64x2(a.extract(0) as i64, a.extract(2) as i64);
+    let b = i64x2(b.extract(0) as i64, b.extract(2) as i64);
     let r = unsafe { simd_mul(a, b) };
     i32x4::new(extract(r,0) as i32, (extract(r,0) >> 32) as i32,
                extract(r,1) as i32, (extract(r,1) >> 32) as i32)
@@ -427,7 +412,7 @@ fn i32x4_muld(a: i32x4, b: i32x4) -> i32x4 {
 #[inline(always)]
 fn i32x4_double_shar(a: i32x4, n: u32) -> i32x4 {
     use std::mem::transmute;
-    use simd::x86::sse2::i64x2;
+    use simd::i64x2;
 
     unsafe {
         let a: i64x2 = transmute(a);

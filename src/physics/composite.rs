@@ -1,5 +1,5 @@
 //-
-// Copyright (c) 2017 Jason Lingle
+// Copyright (c) 2017, 2019 Jason Lingle
 //
 // Permission to  use, copy,  modify, and/or distribute  this software  for any
 // purpose  with or  without fee  is hereby  granted, provided  that the  above
@@ -635,8 +635,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
     #[inline(always)]
     fn row_chunk_index4(&self, row: i32x4) -> u32x4 {
         let row = row & i32x4::splat((1 << self.header().rows()) - 1);
-        let row: i32x4 = row << self.header().pitch();
-        row.to_u32()
+        let row: i32x4 = row << (self.header().pitch() as u32);
+        u32x4::from_cast(row)
     }
 
     /// Returns the chunks in the given row.
@@ -674,7 +674,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // (u32x4 doesn't have division or modulo operators since SSE has no
         // integer division support.) Variable names are just the registers
         // LLVM happened to choose; don't read anything special into them.
-        let esi = (col + i32x4::splat(32768)).to_u32();
+        let esi = u32x4::from_cast(col + i32x4::splat(32768));
         let edx = esi * u32x4::splat(0xaaab);   // imul edx,eax,0xaaab
         let edx: u32x4 = edx >> 0x14;           // shr edx,0x14
         let eax: u32x4 = edx << 3;              // lea eax,[rdx*8+0x0]
@@ -682,7 +682,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let esi = esi - eax;                    // sub esi,eax
         let cl = self.header().pitch();         // Multiple instructions
         let eax = u32x4::splat(1);              // mov eax,0x1
-        let eax: u32x4 = eax << cl;             // shl eax,cl
+        let eax: u32x4 = eax << (cl as u32);    // shl eax,cl
         // LLVM's code is sightly different for some reason
         let eax = eax - u32x4::splat(1);        // add eax,0xfff
         let eax = eax & edx;                    // and eax,edx
@@ -848,7 +848,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // 2**19 (8 screens, far more than we'll ever need) rather than just
         // 2**15 (half a screen). We just need to adjust the final calculation
         // to be a bit more conservative.
-        const SHIFT: u8 = 4;
+        const SHIFT: u32 = 4;
 
         let header = self.header();
         let offset = header.offset() >> SHIFT;
@@ -980,7 +980,7 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         // we can do the multiply with a simple shift.
         let grid_displacement = Vhl::from_repr(
             grid_displacement_xform.repr().shuf(0, 2, 1, 3) <<
-                CELL_HEX_SHIFT - SUBAFFINE_SHIFT as u8);
+                (CELL_HEX_SHIFT as u32 - SUBAFFINE_SHIFT));
 
         // Determine the first and last rows to scan, and start tracking the
         // base coordinate for that row.
@@ -1069,8 +1069,8 @@ impl<T : Borrow<[i32x4]>> CompositeObject<T> {
         let nominal_b = i32x4::splat(row_zero.b()) +
             (i32x4::splat(grid_displacement.snd().b()) * col >>
              AFFINE_POINT - SUBAFFINE_SHIFT);
-        let approx_a: i32x4 = nominal_a >> CELL_HEX_SHIFT;
-        let approx_b: i32x4 = nominal_b >> CELL_HEX_SHIFT;
+        let approx_a: i32x4 = nominal_a >> (CELL_HEX_SHIFT as u32);
+        let approx_b: i32x4 = nominal_b >> (CELL_HEX_SHIFT as u32);
 
         let a_in_bounds = approx_a.nsw_between(
             that.header().row_offset() as i32,
@@ -1477,8 +1477,8 @@ mod test {
             for i in 0..4 {
                 let expected = composite.col_index(cols[i]);
                 let actual = ChunkRowCoord {
-                    chunk: (res.extract(i as u32) >> 16) as u16,
-                    bit: (res.extract(i as u32) & 0xFFFF) as u16,
+                    chunk: (res.extract(i as usize) >> 16) as u16,
+                    bit: (res.extract(i as usize) & 0xFFFF) as u16,
                 };
                 assert_eq!(expected, actual);
             }
